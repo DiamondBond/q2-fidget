@@ -6,16 +6,17 @@ Install it from **System settings → App Store** and it shows up in **Library �
 | To | Do this |
 | --- | --- |
 | Make it giggle | Tap its tummy |
-| Boop it | Tap its face, or press Centre |
+| Boop it | Tap its face |
 | Pet it | Hold a finger on it |
 | Pick it up and fling it | Drag it, then let go |
 | Annoy it | Tap it five times quickly |
 | Make it dizzy | Spin the wheel fast |
-| Make it say boo | Tap the wisp over its head |
+| Make it say boo | Press Centre |
 | Change its colour, or quit | Press Return for the menu |
 
 Play/Pause and the side buttons keep controlling the music. Leave it alone and it dozes off; after two
-minutes without a touch it closes. Hold Return to close it at once.
+minutes without a touch it closes, unless Smart Awake is on (System settings → Display →
+Controls), which keeps it open and the screen lit. Hold Return to close it at once.
 
 ## How it runs
 

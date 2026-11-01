@@ -1,9 +1,9 @@
 /* q2-fidget: a ghost buddy to poke, on the Shanling Q2's screen.
  *
- * The buddy floats over a dark backdrop, a little flame wisp over its head, and reacts to
- * everything: a tap squishes it and makes it giggle, a hold pets it (hearts), a drag picks it up
- * and flings it, a burst of taps annoys it (tongue out), a fast spin of the wheel makes it dizzy,
- * a poke at its wisp makes it say boo, Centre boops it, and left alone it dozes off. Return opens
+ * The buddy floats over a dark backdrop and reacts to everything: a tap squishes it and makes it
+ * giggle (on its face, a boop), a hold pets it (hearts), a drag picks it up and flings it, a burst
+ * of taps annoys it (tongue out), a fast spin of the wheel makes it dizzy, Centre makes it say
+ * boo, and left alone it dozes off. Return opens
  * the menu: Continue, its colour (blue or pink, kept) and Quit. Play/Pause and the side buttons
  * stay the music's: Q2 Pod never sends them.
  *
@@ -151,8 +151,7 @@ typedef struct {
     float tilt, vtilt;       /* radians, clockwise */
     float arml, vl, armr, vr; /* each arm's lift, 0 down to 1 up */
     float lx, ly, tlx, tly;  /* where the eyes look, -1..1, and where they head */
-    float wave, wisp;        /* the hem's and the wisp's phases */
-    float wfl, wbob, wsway, wglow; /* the wisp's flicker this step: size, bob, sway, brightness */
+    float wave;              /* the hem's phase */
     float t, idle, blink, blink_t, look_t, emit_t;
     float mood_t, next_t;    /* the mood's seconds left; then next, for next_t */
     int mood, next;
@@ -164,7 +163,6 @@ typedef struct {
     float pal_t; /* seconds since the colour changed: the flash */
     int menu, sel, menu_down; /* Return's menu: open, its row, the row a touch went down on, plus 1 */
     float menu_t, menu_wheel; /* seconds open, the wheel's travel towards the next row */
-    int wisp_hit;             /* the touch went down on the wisp */
     part p[PARTS];
 } buddy;
 
@@ -192,7 +190,7 @@ static void sparks(buddy *b, float x, float y, int n, float speed) {
 }
 
 static void init(buddy *b, int pal) {
-    *b = (buddy){ .x = HOME_X, .y = HOME_Y + 30, .sq = 1, .blink = 1.5f, .pal = pal, .pal_t = 9, .wfl = 1 };
+    *b = (buddy){ .x = HOME_X, .y = HOME_Y + 30, .sq = 1, .blink = 1.5f, .pal = pal, .pal_t = 9 };
     b->vy = -160, b->vsq = 3; /* pops up into view */
     moods(b, SURPRISE, 0.35f, HAPPY, 1.0f);
 }
@@ -213,16 +211,6 @@ static float body_dist(const buddy *b, float x, float y) {
     if (absf(y - 8) > 42 || absf(x) < 26) return d; /* nowhere near an arm */
     return smin(d, arm_dist(x, y, x < 0 ? b->arml : b->armr, x < 0 ? -1 : 1), 5);
 }
-/* the wisp: a flickering teardrop flame floating over its head */
-#define WISP_Y (HEAD_Y - HEAD_R - 24)
-static float wisp_dist(const buddy *b, float x, float y) {
-    float fl = b->wfl, yy = (y - WISP_Y - b->wbob) / fl;
-    float up = smooth(-4, 18, -yy); /* 0 at the bulb, 1 at the tip */
-    float sway = b->wsway * up * up;
-    float k = len((x - sway) / (8.5f * (1 - 0.72f * up)), (yy + 4 * up) / 16);
-    return maxf((k - 1) * 8, absf(yy + 4 * up) - 16) * fl; /* past either end, the true distance */
-}
-
 /* screen to the buddy's own frame: unturned, unsquashed (about its middle). Affine, so a row
  * steps by (ux, uy) a pixel. */
 typedef struct { float c, s, sx, sy, ux, uy; } xform;
@@ -332,8 +320,7 @@ static void touch(buddy *b, char what, float X, float Y) {
         to_local(b, X, Y, &lx, &ly);
         b->down = 1, b->drag = 0, b->down_t = 0;
         b->fx = b->sx = X, b->fy = b->sy = Y;
-        b->wisp_hit = wisp_dist(b, lx, ly) < 8 && body_dist(b, lx, ly) >= 8;
-        b->on = b->wisp_hit || body_dist(b, lx, ly) < 8;
+        b->on = body_dist(b, lx, ly) < 8;
         b->ox = X - b->x, b->oy = Y - b->y;
         if (b->on) b->vsq -= 1.5f;
         else sparks(b, X, Y, 6, 70); /* the eyes follow it (step) */
@@ -350,8 +337,6 @@ static void touch(buddy *b, char what, float X, float Y) {
             b->vsq += 3;
         } else if (b->mood == PET)
             moods(b, HAPPY, 1.0f, NORMAL, 0);
-        else if (b->wisp_hit)
-            boo(b);
         else if (b->on)
             tap(b, X, Y);
         b->drag = b->on = 0;
@@ -365,7 +350,7 @@ static void key(buddy *b, char what, int code) {
         b->menu = 1, b->sel = 0, b->menu_t = 0, b->menu_wheel = 0, b->menu_down = 0;
         if (b->down) touch(b, 'u', b->fx, b->fy); /* a finger on it lets go */
     } else if (code == KEY_CENTER)
-        tap(b, b->x, b->y + HEAD_Y);
+        boo(b);
 }
 
 static void wheel(buddy *b, int travel) {
@@ -414,9 +399,6 @@ static void spring(float *x, float *v, float to, float k, float c, float dt) {
 }
 
 static void step(buddy *b, float dt) {
-    b->wisp += dt * (b->mood == SLEEP ? 0.4f : b->mood == ANNOY || b->mood == BOO ? 2.2f : 1);
-    b->wfl = 1 + 0.08f * fsin(b->wisp * 7.3f) + 0.05f * fsin(b->wisp * 13.1f);
-    b->wbob = 3 * fsin(b->wisp * 2.1f), b->wsway = 5 * fsin(b->wisp * 3.7f), b->wglow = 0.9f + 0.1f * fsin(b->wisp * 11);
     b->menu_t += dt;
     b->t += dt, b->idle += dt, b->down_t += dt, b->wheel_t += dt, b->pal_t += dt;
     if (b->mood_t > 0 && (b->mood_t -= dt) <= 0) moods(b, b->next, b->next_t, NORMAL, 0);
@@ -655,7 +637,7 @@ static void draw_buddy(const buddy *b, unsigned *fb) {
 
     /* its box, turned and squashed, with room for the glow */
     float c = absf(fcos(b->tilt)), s = absf(fsin(b->tilt)), sx = clampf(1 + (1 - b->sq) * 0.9f, 0.75f, 1.3f);
-    float hw = (HEAD_R + 85) * sx, top = (WISP_Y - 45) * b->sq, bot = (FOOT_Y + 60) * b->sq;
+    float hw = (HEAD_R + 85) * sx, top = (HEAD_Y - HEAD_R - 60) * b->sq, bot = (FOOT_Y + 60) * b->sq;
     float hh = (bot - top) / 2, cy = (bot + top) / 2;
     float ew = c * hw + s * hh, eh = s * hw + c * hh;
     float ox = b->x - fsin(b->tilt) * cy, oy = b->y + fcos(b->tilt) * cy;
@@ -681,14 +663,6 @@ static void draw_buddy(const buddy *b, unsigned *fb) {
         const float *row = grid + ((Y - y0) / GRID + 1) * gw + 1;
         for (int X = x0; X < x1; ++X, x += f.ux, y += f.uy) {
             unsigned *px = &fb[Y * W + X];
-            if (y < WISP_Y + 40 && y > WISP_Y - 60 && absf(x) < 50) {
-                float wd = wisp_dist(b, x, y);
-                if (wd < 40) { /* its flame: a hot core, its colour outside, a halo */
-                    if (wd > 0) glow_add(px, P->glow, 0.55f * b->wglow * expneg(wd / 7));
-                    else blend(px, cmix(P->glow, cadd(P->hi, C(1, 1, 1), 0.3f), smooth(0, -7, wd) * 0.85f), sat(0.5f - wd));
-                    if (wd > 0 && wd < 1) blend(px, P->glow, 0.5f - wd);
-                }
-            }
             const float *g = row + (X - x0) / GRID;
             float g0 = g[0], g1 = g[1], g2 = g[gw], g3 = g[gw + 1];
             float lo = minf(minf(g0, g1), minf(g2, g3)), hi = maxf(maxf(g0, g1), maxf(g2, g3));
@@ -825,7 +799,7 @@ int main(int argc, char **argv) {
         { 10.0f, "t d 190 170" }, { 10.05f, "t u 190 170" }, { 10.25f, "t d 190 170" }, { 10.3f, "t u 190 170" },
         { 10.5f, "t d 190 170" }, { 10.55f, "t u 190 170" }, { 10.75f, "t d 190 170" }, { 10.8f, "t u 190 170" },
         { 11.0f, "t d 190 170" }, { 11.05f, "t u 190 170" },             /* annoyed */
-        { 13.4f, "t d 187 50" }, { 13.5f, "t u 187 50" },                 /* the wisp: boo */
+        { 13.4f, "k u 218" },                                             /* Centre: boo */
         { 15.0f, "k u 170" }, { 15.5f, "w -30" }, { 15.9f, "k u 218" },   /* menu: Colour */
         { 16.4f, "k u 170" },                                             /* and back */
         { 17.0f, "t d 330 70" }, { 17.1f, "t u 330 70" },                 /* a poke beside it */
