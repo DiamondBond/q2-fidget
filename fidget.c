@@ -566,8 +566,10 @@ static col face(const buddy *b, const palette *P, float x, float y, col c) {
             else if (eyes == E_SLEEP) /* the lower lids: ‿ */
                 d = arc(ex, ey - 2, 9, 1) - 1.8f;
             else { /* dizzy: a turning spiral */
-                float r = len(ex, ey), a = fatan2(ey, ex) + b->t * 9 * side;
-                float turns = r / 4.2f - a / (2 * PI), f = turns - (float)(int)(turns + 100) + 100;
+                float spin = b->t * 9 / (2 * PI); /* turns so far, kept to one: b->t only grows */
+                spin -= (float)(int)spin;
+                float r = len(ex, ey), turns = r / 4.2f - fatan2(ey, ex) / (2 * PI) - spin * side;
+                float f = turns - (float)(int)(turns + 100) + 100;
                 d = r > 13 ? r - 13 : (absf(f - 0.5f) - 0.22f) * 4.2f;
             }
             col ink = eyes == E_HAPPY ? cmix(INK, P->eye, 0.55f) : INK;
