@@ -513,9 +513,15 @@ static void wheel(buddy *b, int travel) {
 
 /* The bar under it: the toy's eight icons, as on the original's top and bottom edges */
 enum { I_MEAL, I_SNACK, I_PLAY, I_LIGHT, I_MEDICINE, I_CLEAN, I_SCOLD, I_STATS, ICONS, I_POOP = ICONS, I_HEART, STAMPS };
-#define BAR_X 16
-#define BAR_Y 274
-#define BAR_SLOT 43
+/* Clear of the glass's rounded corners, Q2 Pod's GLASS_R (80 px) and GLASS_SLACK (4) */
+#define GLASS_R 80
+#define GLASS_SLACK 4
+#define TOP_X 36  /* the row of hearts, at either side */
+#define TOP_Y 16
+#define SAY_Y (TOP_Y + 26)
+#define BAR_SLOT 38
+#define BAR_X ((W - ICONS * BAR_SLOT) / 2)
+#define BAR_Y 268
 
 static void refuse(buddy *b, const char *why) {
     say(b, why);
@@ -1179,9 +1185,9 @@ static void stamp(unsigned *fb, int k, int cx, int cy, col c) {
         }
 }
 static void meter(unsigned *fb, const char *name, int x, int n) {
-    text(fb, x, 6, name, C(.667f, .667f, .667f));
+    text(fb, x, TOP_Y, name, C(.667f, .667f, .667f));
     x += text_w(name) + 14;
-    for (int i = 0; i < 4; ++i, x += 16) stamp(fb, I_HEART, x, 20, i < n ? C(1, .35f, .52f) : C(.2f, .2f, .2f));
+    for (int i = 0; i < 4; ++i, x += 16) stamp(fb, I_HEART, x, TOP_Y + 14, i < n ? C(1, .35f, .52f) : C(.2f, .2f, .2f));
 }
 /* Whether icon i has something to answer */
 static int wanted(const tama *g, int i) {
@@ -1215,10 +1221,10 @@ static void draw_pet(const buddy *b, unsigned *fb) {
             stamp(fb, I_SCOLD, (int)(b->x + 58 * size_of(b) + 18), (int)(b->y - 96 * size_of(b)), C(1, .35f, .52f));
     }
     if (g->dark) dim(fb, 0.8f);
-    meter(fb, "Food", 22, g->hunger);
-    meter(fb, "Fun", 148, g->fun);
+    meter(fb, "Food", TOP_X, g->hunger);
+    meter(fb, "Fun", TOP_X + 130, g->fun);
     const char *stage = stage_names[g->stage];
-    text(fb, 353 - text_w(stage), 6, stage, P->glow);
+    text(fb, W - TOP_X - text_w(stage), TOP_Y, stage, P->glow);
     for (int i = 0; i < ICONS; ++i) {
         int x = BAR_X + i * BAR_SLOT;
         if (i == b->icon) draw_box(fb, P, x + 2, BAR_Y + 2, BAR_SLOT - 4, BAR_SLOT - 4, 1);
@@ -1234,12 +1240,12 @@ static void draw_pet(const buddy *b, unsigned *fb) {
         char line[32];
         char *e = put(line, "Which way? ");
         e = putn(e, b->round), e = put(e, " of "), putn(e, PLAY_ROUNDS);
-        text(fb, (W - text_w(line)) / 2, 36, line, P->glow);
+        text(fb, (W - text_w(line)) / 2, SAY_Y, line, P->glow);
         char won[16];
         e = put(won, "Won "), putn(e, b->wins);
         text(fb, (W - text_w(won)) / 2, 244, won, C(.667f, .667f, .667f));
     } else if (b->say_t > 0)
-        text(fb, (W - text_w(b->say)) / 2, 36, b->say, cmul(P->glow, sat(b->say_t * 3)));
+        text(fb, (W - text_w(b->say)) / 2, SAY_Y, b->say, cmul(P->glow, sat(b->say_t * 3)));
     if (b->stats) {
         char age[24], weight[24], disc[24], gen[24], *e;
         int d = g->age / (24 * 60);
@@ -1283,10 +1289,18 @@ static unsigned canvas[W * H];
 
 #include <assert.h>
 #define NOW 1800000000
+/* the width the glass hides at each end of row y, as Q2 Pod's tools/ipod.py corner_inset */
+static float glass(int y) {
+    float d = maxf(maxf((float)(GLASS_R - y), (float)(y - (H - GLASS_R))), 0);
+    return GLASS_R - fsqrt(GLASS_R * GLASS_R - d * d);
+}
 /* the pet's rules: ./fidget check */
 static int check(void) {
     static buddy b;
     tama *g = &b.tm;
+    /* the top row and the bar's selection box clear the corners, at their outer rows */
+    assert(glass(TOP_Y) + GLASS_SLACK <= TOP_X);
+    assert(glass(BAR_Y + BAR_SLOT - 2) + GLASS_SLACK <= BAR_X + 2);
     init(&b, 0);
     b.now = NOW;
     /* off is the toy: Centre says boo and the pet's clock doesn't run */
@@ -1306,7 +1320,7 @@ static int check(void) {
     input(&b, "k u 218");
     assert(g->hunger == 4 && g->weight == w + 1);
     /* a tap on the bar picks and acts: Stats, which any press closes without acting */
-    input(&b, "t d 340 300"), input(&b, "t u 340 300");
+    input(&b, "t d 320 300"), input(&b, "t u 320 300");
     assert(b.stats);
     input(&b, "k u 218");
     assert(!b.stats && g->hunger == 4);
