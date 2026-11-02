@@ -1148,7 +1148,7 @@ static float stamp_dist(int k, float x, float y) { /* its distance, in a 32 px b
     case I_SNACK: /* a wrapped sweet */
         d = len(x, y) - 7;
         for (int s = -1; s <= 1; s += 2)
-            d = minf(d, minf(seg(x, y, s * 7.0f, 0, s * 14.0f, -6), seg(x, y, s * 7.0f, 0, s * 14.0f, 6)) - 1.8f);
+            d = minf(d, minf(seg(x, y, s * 7.0f, 0, s * 13.0f, -6), seg(x, y, s * 7.0f, 0, s * 13.0f, 6)) - 1.8f);
         return d;
     case I_PLAY: /* a ball */
         return minf(absf(len(x, y) - 11) - 2, maxf(absf(y) - 1.5f, len(x, y) - 11));
@@ -1158,14 +1158,14 @@ static float stamp_dist(int k, float x, float y) { /* its distance, in a 32 px b
     case I_MEDICINE: /* a cross */
         return minf(maxf(absf(x) - 3.5f, absf(y) - 11), maxf(absf(x) - 11, absf(y) - 3.5f));
     case I_CLEAN: /* a broom */
-        d = seg(x, y, 10, -13, -2, 2) - 1.6f;
+        d = seg(x, y, 9, -12, -2, 2) - 1.6f;
         return minf(d, minf(seg(x, y, -2, 2, -11, 8), minf(seg(x, y, -2, 2, -8, 12), seg(x, y, -2, 2, -3, 13))) - 2);
     case I_SCOLD: /* ! */
         return minf(seg(x, y, 0, -12, 0, 3) - 2.8f, len(x, y - 11) - 3);
     case I_STATS: /* bars */
         d = maxf(absf(x + 9) - 3, absf(y - 7) - 5);
-        d = minf(d, maxf(absf(x) - 3, absf(y - 2) - 10));
-        return minf(d, maxf(absf(x - 9) - 3, absf(y + 2) - 14));
+        d = minf(d, maxf(absf(x) - 3, absf(y - 3) - 9));
+        return minf(d, maxf(absf(x - 9) - 3, absf(y) - 12));
     case I_POOP: /* a coil */
         d = minf(ellipse(x, y - 9, 13, 5), ellipse(x, y - 2, 9, 4.5f));
         return minf(d, seg(x, y, 0, -6, 3, -11) - 3);
@@ -1173,11 +1173,15 @@ static float stamp_dist(int k, float x, float y) { /* its distance, in a 32 px b
         return heart(x / 15, -y / 15 + 0.55f) * 15;
     }
 }
+#define ICON_SCALE 0.85f /* the bar's icons, with room inside the picked one's frame */
+static float icon_dist(int k, float x, float y) {
+    return k < ICONS ? stamp_dist(k, x / ICON_SCALE, y / ICON_SCALE) * ICON_SCALE : stamp_dist(k, x, y);
+}
 static void stamp(unsigned *fb, int k, int cx, int cy, col c) {
     if (!stamp_made[k]++)
         for (int y = 0; y < STAMP; ++y)
             for (int x = 0; x < STAMP; ++x)
-                stamps[k][y * STAMP + x] = (unsigned char)(sat(0.5f - stamp_dist(k, (float)x + 0.5f - STAMP / 2, (float)y + 0.5f - STAMP / 2)) * 255);
+                stamps[k][y * STAMP + x] = (unsigned char)(sat(0.5f - icon_dist(k, (float)x + 0.5f - STAMP / 2, (float)y + 0.5f - STAMP / 2)) * 255);
     for (int y = 0; y < STAMP; ++y)
         for (int x = 0; x < STAMP; ++x) {
             int X = cx - STAMP / 2 + x, Y = cy - STAMP / 2 + y, a = stamps[k][y * STAMP + x];
@@ -1301,6 +1305,13 @@ static int check(void) {
     /* the top row and the bar's selection box clear the corners, at their outer rows */
     assert(glass(TOP_Y) + GLASS_SLACK <= TOP_X);
     assert(glass(BAR_Y + BAR_SLOT - 2) + GLASS_SLACK <= BAR_X + 2);
+    /* no icon reaches the picked one's frame, whose inner edge is 2.5 px inside the box */
+    for (int k = 0; k < ICONS; ++k)
+        for (int j = 0; j < STAMP * STAMP; ++j) {
+            float X = (float)(j % STAMP) + 0.5f - STAMP / 2, Y = (float)(j / STAMP) + 0.5f - STAMP / 2;
+            float hw = (BAR_SLOT - 4) * 0.5f, r = 12, qx = absf(X) - hw + r, qy = absf(Y) - hw + r;
+            assert(icon_dist(k, X, Y) >= 0.5f || len(maxf(qx, 0), maxf(qy, 0)) + minf(maxf(qx, qy), 0) - r < -3.5f);
+        }
     init(&b, 0);
     b.now = NOW;
     /* off is the toy: Centre says boo and the pet's clock doesn't run */
