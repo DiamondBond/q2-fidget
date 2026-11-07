@@ -527,10 +527,10 @@ static const char *sheet_load(long n) {
             if (type == 1 || type == 5 || type > 6) return damaged;
             if (d[12]) return "buddy.png is interlaced";
             if (depth != 8 && (ch != 1 || (depth != 1 && depth != 2 && depth != 4))) return "Save buddy.png as 8-bit";
-            for (npal = 0; type == 0 && npal < 1 << depth; ++npal) /* ImageMagick's 1-bit black on clear */
-                pal[npal] = 0xff000000u | (unsigned)(npal * 255 / ((1 << depth) - 1)) * 0x10101u;
+            if (type == 0) /* as ImageMagick's 1-bit black on clear */
+                for (int i = 0; i < 1 << depth; ++i) pal[i] = 0xff000000u | (unsigned)(i * 255 / ((1 << depth) - 1)) * 0x10101u;
         } else if (type < 0) return damaged; /* IHDR comes first */
-        else if (is4(t, "PLTE") && len <= 768 && len % 3 == 0)
+        else if (is4(t, "PLTE") && type == 3 && len <= 768 && len % 3 == 0)
             for (npal = 0; npal < (int)len / 3; ++npal)
                 pal[npal] = 0xff000000u | (unsigned)d[npal * 3] << 16 | (unsigned)d[npal * 3 + 1] << 8 | d[npal * 3 + 2];
         else if (is4(t, "tRNS")) {
@@ -1483,11 +1483,13 @@ static void draw_pet_under(const buddy *b, unsigned *fb) { /* what lies on the g
     for (int i = 0; i < b->tm.poops; ++i)
         stamp(fb, I_POOP, i < 2 ? 48 + i * 36 : 327 - (i - 2) * 36, 244, C(.62f, .46f, .28f));
 }
-/* The line under the hearts, one thing at a time: the game's round, what's wrong with buddy.png, or
- * what the pet says. The toy's only ever has the note. */
+/* The line under the hearts, one thing at a time: what's wrong with buddy.png, its few seconds first,
+ * then the game's round or what the pet says. The toy's only ever has the note. */
 static void say_line(const buddy *b, unsigned *fb) {
     const palette *P = &pals[b->pal];
-    if (b->round) {
+    if (b->note_t > 0)
+        text(fb, (W - text_w(b->note)) / 2, SAY_Y, b->note, cmul(P->glow, sat(b->note_t * 3)));
+    else if (b->round) {
         char line[32];
         char *e = put(line, "Which way? ");
         e = putn(e, b->round), e = put(e, " of "), putn(e, PLAY_ROUNDS);
@@ -1495,9 +1497,7 @@ static void say_line(const buddy *b, unsigned *fb) {
         char won[16];
         e = put(won, "Won "), putn(e, b->wins);
         text(fb, (W - text_w(won)) / 2, 244, won, C(.667f, .667f, .667f));
-    } else if (b->note_t > 0)
-        text(fb, (W - text_w(b->note)) / 2, SAY_Y, b->note, cmul(P->glow, sat(b->note_t * 3)));
-    else if (b->say_t > 0)
+    } else if (b->say_t > 0)
         text(fb, (W - text_w(b->say)) / 2, SAY_Y, b->say, cmul(P->glow, sat(b->say_t * 3)));
 }
 static void draw_pet(const buddy *b, unsigned *fb) {
@@ -1530,8 +1530,8 @@ static void draw_pet(const buddy *b, unsigned *fb) {
         const char *a = "It floated away...", *c = "Centre: a new egg";
         text(fb, (W - text_w(a)) / 2, 120, a, P->glow);
         text(fb, (W - text_w(c)) / 2, 156, c, C(.667f, .667f, .667f));
-    } else
-        say_line(b, fb);
+    }
+    say_line(b, fb);
     if (b->stats) {
         char age[24], weight[24], disc[24], gen[24], *e;
         int d = g->age / (24 * 60);
@@ -1764,7 +1764,12 @@ static int check(void) {
     assert(b.say_t == 2);
     step(&b, 0.6f), step(&b, 0.1f);
     assert(b.note_t <= 0 && b.say_t < 2);
-    b.sel = 2, pet_toggle(&b);
+    /* the note shows on the gone screen too */
+    static unsigned shot[W * H];
+    g->gone = 1, b.note = "buddy.png is damaged", render(&b, shot);
+    b.note_t = 3, render(&b, canvas), b.note_t = 0, g->gone = 0;
+    assert(memcmp(shot + SAY_Y * W, canvas + SAY_Y * W, FONT_H * W * sizeof *canvas));
+    pet_toggle(&b);
     assert(!b.on_pet && b.say_t == 0);
 
     /* buddy.png: the template, as ffmpeg compressed it (every row filter but Avg), decodes to the
