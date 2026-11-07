@@ -188,7 +188,8 @@ typedef struct {
     int now, save;            /* the clock, seconds since the epoch; the pet changed, to be kept */
     int icon, icon_down, stats; /* the bar's picked icon, the one a touch went down on plus 1, Stats */
     float icon_wheel, say_t, gift_t, pet_t; /* the bar's wheel, say's seconds, the food's, petting's rest */
-    const char *say;
+    const char *say, *note;   /* note: what's wrong with buddy.png, for note_t seconds */
+    float note_t;
     int gift;                 /* the stamp falling into its mouth */
     int round, wins, turn;    /* the game: this round (1..PLAY_ROUNDS, 0 none), won so far, its last turn */
     float play_wheel, shown;  /* the wheel towards a guess, seconds left showing the turn */
@@ -380,8 +381,10 @@ static int look(const buddy *b) {
 }
 
 static unsigned sheet[SHEET_W * SHEET_H]; /* premultiplied, so a bilinear sample has no dark fringe */
-static unsigned char sheet_file[SHEET_MAX], sheet_raw[SHEET_H * (1 + SHEET_W * 4)];
 static int sheet_ok;
+/* the file and its rows: scratch, given back once read (load). Aligned to 64 KB, MIPS's biggest page */
+static unsigned char sheet_file[SHEET_MAX] __attribute__((aligned(65536)));
+static unsigned char sheet_raw[SHEET_H * (1 + SHEET_W * 4)] __attribute__((aligned(65536)));
 
 /* inflate, after zlib's puff: a bit at a time, every read and write bounds-checked. ponytail: a
  * tenth of a second or so at the start; a table decode if that ever shows */
@@ -451,16 +454,12 @@ static int zstored(zs *z) {
     return 0;
 }
 static int zfixed(zs *z) {
-    static huff lc, dc;
-    static int made;
-    if (!made) {
-        unsigned char len[288];
-        for (int i = 0; i < 288; ++i) len[i] = i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8;
-        zbuild(&lc, len, 288);
-        for (int i = 0; i < 30; ++i) len[i] = 5;
-        zbuild(&dc, len, 30);
-        made = 1;
-    }
+    unsigned char len[288];
+    huff lc, dc;
+    for (int i = 0; i < 288; ++i) len[i] = i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8;
+    zbuild(&lc, len, 288);
+    for (int i = 0; i < 30; ++i) len[i] = 5;
+    zbuild(&dc, len, 30);
     return zcodes(z, &lc, &dc);
 }
 static int zdynamic(zs *z) {
@@ -502,14 +501,15 @@ static int zinflate(const unsigned char *p, long n, unsigned char *out, long siz
 
 static unsigned be32(const unsigned char *p) { return (unsigned)p[0] << 24 | (unsigned)p[1] << 16 | (unsigned)p[2] << 8 | p[3]; }
 static int is4(const unsigned char *p, const char *s) { return p[0] == s[0] && p[1] == s[1] && p[2] == s[2] && p[3] == s[3]; }
-static int iabs(int x) { return x < 0 ? -x : x; }
 /* buddy.png, its n bytes read into sheet_file: 0 when it's on the sheet, else what's wrong with it.
+ * 8 bits a channel, grey or colour, with alpha or tRNS's clear colour, or indexed at 1 to 8 bits.
  * ponytail: CRCs unchecked; a corrupt file is still bounds-checked, and just fails or looks wrong */
 static const char *sheet_load(long n) {
     static const unsigned char sig[8] = { 137, 'P', 'N', 'G', 13, 10, 26, 10 };
     const char *damaged = "buddy.png is damaged";
-    unsigned char *p = sheet_file + 8, *e = sheet_file + n, *z = sheet_file, pal[256][4] = { { 0 } };
-    int type = -1, bpp = 1, npal = 0;
+    unsigned char *p = sheet_file + 8, *e = sheet_file + n, *z = sheet_file;
+    unsigned pal[256] = { 0 };                           /* indexed: ARGB */
+    int type = -1, depth = 8, ch = 1, npal = 0, key = -1; /* key: tRNS's clear colour, as RGB */
     sheet_ok = 0;
     if (n >= SHEET_MAX) return "buddy.png is too big";
     for (int i = 0; i < 8; ++i)
@@ -522,37 +522,43 @@ static const char *sheet_load(long n) {
         if (is4(t, "IHDR")) {
             if (len != 13) return damaged;
             if (be32(d) != SHEET_W || be32(d + 4) != SHEET_H) return "buddy.png isn't 1344 x 384";
-            type = d[9], bpp = type == 2 ? 3 : type == 6 ? 4 : 1;
-            if (d[8] != 8 || (type != 2 && type != 3 && type != 6) || d[12]) return "Save buddy.png as 8-bit";
+            depth = d[8], type = d[9], ch = type == 2 ? 3 : type == 4 ? 2 : type == 6 ? 4 : 1;
+            if (type == 1 || type == 5 || type > 6) return damaged;
+            if (d[12]) return "buddy.png is interlaced";
+            if (depth != 8 && (type != 3 || (depth != 1 && depth != 2 && depth != 4))) return "Save buddy.png as 8-bit";
         } else if (type < 0) return damaged; /* IHDR comes first */
         else if (is4(t, "PLTE") && len <= 768 && len % 3 == 0)
             for (npal = 0; npal < (int)len / 3; ++npal)
-                pal[npal][0] = d[npal * 3], pal[npal][1] = d[npal * 3 + 1], pal[npal][2] = d[npal * 3 + 2], pal[npal][3] = 255;
-        else if (is4(t, "tRNS"))
-            for (unsigned i = 0; i < len && i < 256; ++i) pal[i][3] = d[i];
-        else if (is4(t, "IDAT"))
+                pal[npal] = 0xff000000u | (unsigned)d[npal * 3] << 16 | (unsigned)d[npal * 3 + 1] << 8 | d[npal * 3 + 2];
+        else if (is4(t, "tRNS")) {
+            for (unsigned i = 0; type == 3 && i < len && i < 256; ++i) pal[i] = (pal[i] & 0xffffff) | (unsigned)d[i] << 24;
+            if (type == 0 && len == 2) key = d[1] * 0x10101;
+            if (type == 2 && len == 6) key = d[1] << 16 | d[3] << 8 | d[5];
+        } else if (is4(t, "IDAT"))
             for (unsigned i = 0; i < len; ++i) *z++ = d[i]; /* z stays behind d: safe */
         else if (is4(t, "IEND")) break;
     }
     if (type == 3 && !npal) return damaged;
-    long row = 1 + (long)SHEET_W * bpp;
+    int bpp = depth == 8 ? ch : 1; /* the filters' step, bytes */
+    long row = 1 + ((long)SHEET_W * ch * depth + 7) / 8;
     if (zinflate(sheet_file, z - sheet_file, sheet_raw, SHEET_H * row)) return damaged;
-    for (int y = 0; y < SHEET_H; ++y) { /* the rows' filters undone, then premultiplied */
+    for (int y = 0; y < SHEET_H; ++y) { /* each row's filter undone, then onto the sheet premultiplied */
         unsigned char *r = sheet_raw + y * row + 1, *up = y ? r - row : 0, f = r[-1];
         if (f > 4) return damaged;
-        for (int i = 0; i < SHEET_W * bpp; ++i) {
+        for (int i = 0; i < row - 1; ++i) {
             int a = i >= bpp ? r[i - bpp] : 0, b = up ? up[i] : 0, c = up && i >= bpp ? up[i - bpp] : 0;
-            int pa = iabs(b - c), pb = iabs(a - c), pc = iabs(a + b - 2 * c);
+            int pa = __builtin_abs(b - c), pb = __builtin_abs(a - c), pc = __builtin_abs(a + b - 2 * c);
             r[i] = (unsigned char)(r[i] + (f == 1 ? a : f == 2 ? b : f == 3 ? (a + b) / 2 :
                                           f == 4 ? (pa <= pb && pa <= pc ? a : pb <= pc ? b : c) : 0));
         }
-    }
-    for (int y = 0; y < SHEET_H; ++y) {
-        const unsigned char *r = sheet_raw + y * row + 1;
-        for (int x = 0; x < SHEET_W; ++x, r += bpp) {
-            const unsigned char *q = bpp == 1 ? pal[*r] : r;
-            unsigned a = bpp == 3 ? 255 : q[3];
-            sheet[y * SHEET_W + x] = a << 24 | (q[0] * a + 127) / 255 << 16 | (q[1] * a + 127) / 255 << 8 | (q[2] * a + 127) / 255;
+        for (int x = 0; x < SHEET_W; ++x) {
+            const unsigned char *s = r + x * ch; /* grey's one channel serves for all three */
+            unsigned c = type == 3 ? pal[(r[x * depth / 8] >> (8 - depth - x * depth % 8)) & ((1 << depth) - 1)]
+                                   : (type & 4 ? s[ch - 1] : 255u) << 24 | (unsigned)s[0] << 16 |
+                                         (unsigned)s[type & 2 ? 1 : 0] << 8 | s[type & 2 ? 2 : 0];
+            unsigned a = (int)(c & 0xffffff) == key ? 0 : c >> 24;
+            sheet[y * SHEET_W + x] = a << 24 | ((c >> 16 & 255) * a + 127) / 255 << 16 |
+                                     ((c >> 8 & 255) * a + 127) / 255 << 8 | ((c & 255) * a + 127) / 255;
         }
     }
     sheet_ok = 1;
@@ -577,10 +583,16 @@ static float sheet_at(int l, float x, float y, col *c) {
     *c = C(r / a, g / a, bl / a);
     return a / 255;
 }
-static int sheet_near(const buddy *b, float x, float y) { /* a finger within 8 px of it */
+static int crown_of(const buddy *b) { /* the look over its face: an adult's halo or horns, else -1 */
+    return !b->on_pet || !b->tm.form ? -1 : b->tm.form > 0 ? L_HALO : L_HORNS;
+}
+static int sheet_near(const buddy *b, float x, float y) { /* a finger within 8 px of it, crown and all */
     col c;
-    for (int k = 0; k < 9; ++k)
-        if (sheet_at(look(b), x + (float)(k % 3 - 1) * 8, y + (float)(k / 3 - 1) * 8, &c) >= 0.5f) return 1;
+    int l = look(b), crown = crown_of(b);
+    for (int k = 0; k < 9; ++k) {
+        float fx = x + (float)(k % 3 - 1) * 8, fy = y + (float)(k / 3 - 1) * 8;
+        if (sheet_at(l, fx, fy, &c) >= 0.5f || (crown >= 0 && sheet_at(crown, fx, fy, &c) >= 0.5f)) return 1;
+    }
     return 0;
 }
 
@@ -957,7 +969,7 @@ static void step(buddy *b, float dt) {
     b->menu_t += dt;
     b->t += dt, b->idle += dt, b->down_t += dt, b->wheel_t += dt, b->pal_t += dt;
     if (b->on_pet) pet_step(b, dt);
-    else if (b->say_t > 0) b->say_t -= dt; /* buddy.png's note */
+    if (b->note_t > 0) b->note_t -= dt;
     if (b->mood_t > 0 && (b->mood_t -= dt) <= 0) moods(b, b->next, b->next_t, NORMAL, 0);
     if (b->mood == NORMAL && b->idle > SLEEP_S && !b->down && !is_egg(b)) moods(b, SLEEP, 0, NORMAL, 0);
     if (b->down && b->on && !b->drag && b->down_t > PET_S) {
@@ -1233,7 +1245,7 @@ static void draw_buddy(const buddy *b, unsigned *fb) {
     int y0 = (int)maxf(0, oy - eh), y1 = (int)minf(H, oy + eh + 1);
     xform f = frame_of(b);
     if (sheet_ok) { /* a buddy of your own: its look's cell, and an adult's halo or horns over it */
-        int l = look(b), crown = !b->on_pet || !b->tm.form ? -1 : b->tm.form > 0 ? L_HALO : L_HORNS;
+        int l = look(b), crown = crown_of(b);
         for (int Y = y0; Y < y1; ++Y) {
             float x, y;
             to_local(b, (float)x0, (float)Y, &x, &y);
@@ -1506,7 +1518,7 @@ static void draw_pet(const buddy *b, unsigned *fb) {
         char won[16];
         e = put(won, "Won "), putn(e, b->wins);
         text(fb, (W - text_w(won)) / 2, 244, won, C(.667f, .667f, .667f));
-    } else if (b->say_t > 0)
+    } else if (b->say_t > 0 && b->note_t <= 0) /* buddy.png's note has the line */
         text(fb, (W - text_w(b->say)) / 2, SAY_Y, b->say, cmul(P->glow, sat(b->say_t * 3)));
     if (b->stats) {
         char age[24], weight[24], disc[24], gen[24], *e;
@@ -1530,8 +1542,8 @@ static void render(const buddy *b, unsigned *fb) {
     if (b->on_pet) draw_pet_under(b, fb);
     if (!b->on_pet || !b->tm.gone) draw_buddy(b, fb), draw_parts(b, fb);
     if (b->on_pet) draw_pet(b, fb);
-    else if (b->say_t > 0) /* buddy.png's note */
-        text(fb, (W - text_w(b->say)) / 2, SAY_Y, b->say, cmul(pals[b->pal].glow, sat(b->say_t * 3)));
+    if (b->note_t > 0 && !b->round) /* what's wrong with buddy.png; the game's line wins */
+        text(fb, (W - text_w(b->note)) / 2, SAY_Y, b->note, cmul(pals[b->pal].glow, sat(b->note_t * 3)));
     if (b->menu) draw_menu(b, fb);
 }
 
@@ -1592,12 +1604,15 @@ static unsigned char *put32(unsigned char *p, unsigned v) {
     p[0] = (unsigned char)(v >> 24), p[1] = (unsigned char)(v >> 16), p[2] = (unsigned char)(v >> 8), p[3] = (unsigned char)v;
     return p + 4;
 }
-/* a PNG in stored blocks, as no encoder here writes them: clear, but for its last pixel */
-static long png_stored(unsigned char *f) {
-    long raw = SHEET_H * (1 + SHEET_W * 4L);
+/* A PNG in stored blocks, as no encoder here writes them: colour type ct at depth bits, with the
+ * chunks pre (PLTE, tRNS) before its IDAT, every row unfiltered and zero but for its last bytes, tail */
+static long png_stored(unsigned char *f, int ct, int depth, const char *pre, int npre, const char *tail, int ntail) {
+    int ch = ct == 2 ? 3 : ct == 4 ? 2 : ct == 6 ? 4 : 1;
+    long raw = SHEET_H * (1 + ((long)SHEET_W * ch * depth + 7) / 8);
     unsigned char *p = f;
     memcpy(p, "\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR", 16), p = put32(put32(p + 16, SHEET_W), SHEET_H);
-    *p++ = 8, *p++ = 6, *p++ = 0, *p++ = 0, *p++ = 0, p = put32(p, 0); /* RGBA; the CRC, unchecked */
+    *p++ = (unsigned char)depth, *p++ = (unsigned char)ct, *p++ = 0, *p++ = 0, *p++ = 0, p = put32(p, 0); /* the CRC, unchecked */
+    memcpy(p, pre, (size_t)npre), p += npre;
     p = put32(p, (unsigned)(2 + raw + (raw + 65534) / 65535 * 5 + 4)), memcpy(p, "IDAT\x78\x01", 6), p += 6;
     for (long left = raw, k; left; left -= k) {
         k = left < 65535 ? left : 65535;
@@ -1605,7 +1620,7 @@ static long png_stored(unsigned char *f) {
         *p++ = (unsigned char)~k, *p++ = (unsigned char)(~k >> 8);
         memset(p, 0, (size_t)k), p += k;
     }
-    p[-4] = 10, p[-3] = 20, p[-2] = 30, p[-1] = 255;
+    memcpy(p - ntail, tail, (size_t)ntail);
     p = put32(put32(p, 0), 0); /* the Adler and CRC, unchecked */
     memcpy(p, "\0\0\0\0IEND\0\0\0\0", 12);
     return p + 12 - f;
@@ -1735,7 +1750,7 @@ static int check(void) {
     assert(look(&b) == L_SAD);
 
     /* buddy.png: the template, as ffmpeg compressed it (every row filter but Avg), decodes to the
-     * looks it was made from */
+     * looks it was made from. Run here, and ./template.sh after changing how the ghost looks */
     static unsigned char want[SHEET_W * SHEET_H * 4], png[SHEET_MAX];
     template(want);
     assert(!sheet_read("buddy-template.png") && sheet_ok);
@@ -1745,18 +1760,30 @@ static int check(void) {
         for (int k = 0; a == 255 && k < 3; ++k) assert(abs((int)(sheet[i] >> (16 - 8 * k) & 255) - want[i * 4 + k]) <= 1);
     }
     /* stored blocks, and the last pixel lands */
-    long pn = png_stored(sheet_file);
-    assert(!sheet_load(pn) && sheet[0] == 0 && sheet[SHEET_W * SHEET_H - 1] == 0xff0a141eu);
+    const int last = SHEET_W * SHEET_H - 1;
+    long pn = png_stored(sheet_file, 6, 8, "", 0, "\x0a\x14\x1e\xff", 4);
+    assert(!sheet_load(pn) && sheet[0] == 0 && sheet[last] == 0xff0a141eu);
     /* row 1 under Avg, which ffmpeg never picks: its second pixel half its first (the first block's
      * bytes start at 48) */
-    png_stored(sheet_file), sheet_file[48 + 5377] = 3, memcpy(sheet_file + 48 + 5378, "\x0a\x14\x1e\xff", 4);
+    png_stored(sheet_file, 6, 8, "", 0, "", 0), sheet_file[48 + 5377] = 3, memcpy(sheet_file + 48 + 5378, "\x0a\x14\x1e\xff", 4);
     assert(!sheet_load(pn) && sheet[SHEET_W] == 0xff0a141eu && sheet[SHEET_W + 1] == 0x7f020507u);
+    /* as ImageMagick and optimisers save few colours: 4-bit indexed, the last byte's low half the last
+     * pixel; grey with alpha; and RGB with tRNS's clear colour */
+    static const char plte[] = "\0\0\0\6PLTE\0\0\0\x0a\x14\x1e" "\0\0\0\0" "\0\0\0\2tRNS\0\xff" "\0\0\0\0";
+    assert(!sheet_load(png_stored(sheet_file, 3, 4, plte, sizeof plte - 1, "\x01", 1)));
+    assert(sheet[last - 1] == 0 && sheet[last] == 0xff0a141eu);
+    assert(!sheet_load(png_stored(sheet_file, 4, 8, "", 0, "\x0a\xff", 2)) && sheet[last] == 0xff0a0a0au);
+    static const char key[] = "\0\0\0\6tRNS\0\x0a\0\x14\0\x1e" "\0\0\0\0";
+    assert(!sheet_load(png_stored(sheet_file, 2, 8, key, sizeof key - 1, "\x0a\x14\x1e", 3)));
+    assert(sheet[last] == 0 && sheet[last - 1] == 0xff000000u);
     /* a bad file says why, and leaves the ghost */
-    png_stored(sheet_file), sheet_file[19] ^= 1;
+    png_stored(sheet_file, 6, 8, "", 0, "", 0), sheet_file[19] ^= 1;
     assert(strstr(sheet_load(pn), "1344") && !sheet_ok);
-    png_stored(sheet_file), sheet_file[24] = 16;
+    png_stored(sheet_file, 6, 8, "", 0, "", 0), sheet_file[24] = 16;
     assert(strstr(sheet_load(pn), "8-bit"));
-    png_stored(sheet_file), sheet_file[1] = 'J';
+    png_stored(sheet_file, 6, 8, "", 0, "", 0), sheet_file[28] = 1;
+    assert(strstr(sheet_load(pn), "interlaced"));
+    png_stored(sheet_file, 6, 8, "", 0, "", 0), sheet_file[1] = 'J';
     assert(strstr(sheet_load(pn), "PNG"));
     assert(strstr(sheet_load(SHEET_MAX), "big"));
     /* cut short anywhere it's damaged; a byte wrong anywhere, it says so or decodes, but never strays
@@ -1807,7 +1834,7 @@ int main(int argc, char **argv) {
     init(&b, pal);
     b.now = NOW;
     const char *why = argc > 5 ? sheet_read(argv[5]) : 0; /* preview.sh's sheet: a buddy of your own */
-    if (why) say(&b, why), b.say_t = 6;
+    if (why) b.note = why, b.note_t = 6;
     char path[256];
     int pet = argc > 4 && atoi(argv[4]); /* preview.sh's "pet": its Tamagotchi session */
     static const struct { float at; const char *in; } pet_script[] = {
@@ -1880,6 +1907,7 @@ __asm__(".text\n.set noreorder\n.globl sc\nsc:\n"
 #define SYS_recv 4175
 #define SYS_socket 4183
 #define SYS_poll 4188
+#define SYS_madvise 4218
 #define SYS_clock_gettime 4263
 #define FBIOGET_VSCREENINFO 0x4600
 #define FBIOGET_FSCREENINFO 0x4602
@@ -1890,6 +1918,7 @@ __asm__(".text\n.set noreorder\n.globl sc\nsc:\n"
 #define O_TRUNC 0x200
 #define O_CLOEXEC 0x80000
 #define MSG_DONTWAIT 0x40
+#define MADV_DONTNEED 4
 
 void *memset(void *p, int v, __SIZE_TYPE__ n) {
     volatile unsigned char *d = p;
@@ -1945,7 +1974,10 @@ static void load(buddy *b) {
     for (n = 0; n < SHEET_MAX && (k = sc(SYS_read, fd, (long)(sheet_file + n), SHEET_MAX - n, 0, 0, 0)) > 0;) n += k;
     sc(SYS_close, fd, 0, 0, 0, 0, 0);
     const char *why = sheet_load(n);
-    if (why) say(b, why), b->say_t = 6;
+    if (why) b->note = why, b->note_t = 6;
+    /* the scratch's 5 MB back; whole 64 KB only, as what lies past either end isn't ours */
+    sc(SYS_madvise, (long)sheet_file, (long)(sizeof sheet_file & ~0xffffu), MADV_DONTNEED, 0, 0, 0);
+    sc(SYS_madvise, (long)sheet_raw, (long)(sizeof sheet_raw & ~0xffffu), MADV_DONTNEED, 0, 0, 0);
 }
 static void save_state(const buddy *b) {
     char c[2] = { (char)('0' + b->pal), b->on_pet ? '1' : '0' };

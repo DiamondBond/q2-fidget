@@ -52,8 +52,9 @@ it.) Updates keep it; App Store → Remove deletes it with the folder.
 
 ![The template's 14 cells, numbered](buddy-guide.png)
 
-Start from [buddy-template.png](buddy-template.png), the ghost itself: **1344 x 384**, an 8-bit PNG (RGBA, RGB
-or indexed), 7 x 2 cells of 192 px in the order above. Each cell's point (96, 112) is your buddy's middle, where
+Start from [buddy-template.png](buddy-template.png), the ghost itself: **1344 x 384**, a PNG at 8 bits a
+channel (colour or grey, with or without alpha, or indexed at any depth) and not interlaced, 7 x 2 cells of 192 px
+in the order above. Each cell's point (96, 112) is your buddy's middle, where
 it floats, turns and squashes. Clear pixels are see-through and soft edges blend. Baby to Adult are the same
 cells, smaller.
 
@@ -100,9 +101,10 @@ minutes since by the Q2's clock. It reads `.fidget/buddy.png` when it starts, wi
 
 `./build.sh` makes `dist/fidget.zip` (needs `clang` and `ld.lld`). `./preview.sh` renders a
 scripted session on the PC to `preview.mp4` and `preview.gif`, and `./preview.sh 0 pet` one in Tamagotchi
-mode; a third argument, a PNG, previews it as `buddy.png`. It also renders `buddy-template.png` and
-`buddy-guide.png` from the ghost (needs `ffmpeg` with `drawtext`). `cc -DHOST fidget.c -o /tmp/buddy && /tmp/buddy check`,
-run here, tests the pet's rules and the PNG decoder, on `buddy-template.png`; build it with
+mode; a third argument, a PNG, previews it as `buddy.png`. `./template.sh` renders `buddy-template.png` and
+`buddy-guide.png` from the ghost (needs `ffmpeg` with `drawtext`): run it after changing how the ghost looks.
+`cc -DHOST fidget.c -o /tmp/buddy && /tmp/buddy check`, run here, tests the pet's rules and the PNG decoder,
+on `buddy-template.png`; build it with
 `-fsanitize=address,undefined` to see that a damaged file never reads or writes astray. `tools/font.py`
 regenerates `font.h` (needs Pillow).
 
