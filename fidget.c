@@ -8,7 +8,8 @@
  * Play/Pause and the side buttons stay the music's: Q2 Pod never sends them.
  *
  * Tamagotchi on, the same ghost is raised from an egg in real time (see "the pet" below); off, it is
- * the toy above and the pet's clock stops.
+ * the toy above and the pet's clock stops. A buddy.png beside the program, a sheet of looks its owner
+ * painted, is drawn instead of the ghost (see "a buddy of your own").
  *
  * One file, no libraries: raw MIPS o32 syscalls, a software renderer on /dev/fb0 (320 x 375,
  * 32 bpp, two pages; the 375 x 320 landscape view stored turned clockwise, as Q2 Pod's video
@@ -229,6 +230,9 @@ static float arm_dist(float x, float y, float lift, float side) {
     return seg(x, y, sx, sy, sx + side * fcos(a) * 20, sy + fsin(a) * 20) - 10.5f;
 }
 static int is_egg(const buddy *b) { return b->on_pet && b->tm.stage == EGG; }
+static float crown_dist(int form, float x, float y) { /* an adult's halo (form 1) or horns (-1) */
+    return form > 0 ? absf(len(x, (y + 98) * 3.2f) - 30) - 5 : seg(absf(x), y, 28, -72, 37, -94) - 6;
+}
 static float body_dist(const buddy *b, float x, float y) {
     if (is_egg(b)) return ellipse(x, y - 5, 54, 68);
     float head = len(x, y - HEAD_Y) - HEAD_R;
@@ -238,8 +242,8 @@ static float body_dist(const buddy *b, float x, float y) {
     float dx = absf(x) - w + r, dy = absf(y - cy) - hh + r;
     float skirt = minf(maxf(dx, dy), 0) + len(maxf(dx, 0), maxf(dy, 0)) - r;
     float d = smin(head, skirt, 6);
-    if (b->on_pet && b->tm.form > 0) d = minf(d, absf(len(x, (y + 98) * 3.2f) - 30) - 5); /* a halo */
-    if (b->on_pet && b->tm.form < 0) d = smin(d, seg(absf(x), y, 28, -72, 37, -94) - 6, 5); /* horns */
+    if (b->on_pet && b->tm.form > 0) d = minf(d, crown_dist(1, x, y)); /* a halo */
+    if (b->on_pet && b->tm.form < 0) d = smin(d, crown_dist(-1, x, y), 5); /* horns */
     if (absf(y - 8) > 42 || absf(x) < 26) return d; /* nowhere near an arm */
     return smin(d, arm_dist(x, y, x < 0 ? b->arml : b->armr, x < 0 ? -1 : 1), 5);
 }
@@ -347,6 +351,237 @@ static void tama_sync(tama *g, int now) {
 static int tama_ok(const tama *g) {
     return g->magic == TAMA_MAGIC && g->stage >= EGG && g->stage <= ADULT && g->hunger >= 0 && g->hunger <= 4 &&
            g->fun >= 0 && g->fun <= 4;
+}
+
+/* ---- a buddy of your own: buddy.png beside the program (README.md) ----
+ *
+ * A sheet of its looks, SHEET_COLS to a row in LOOKS' order, each a CELL px square in its own frame
+ * with its middle at (CELL / 2, CELL_Y). It turns, squashes and grows as the ghost does; the halo
+ * and horns go over its face, on an adult that has them. With none, or a bad one, the ghost. */
+enum { L_NORMAL, L_BLINK, L_HAPPY, L_PET, L_SURPRISE, L_ANNOY, L_BOO,
+       L_DIZZY, L_SLEEP, L_SAD, L_SICK, L_EGG, L_HALO, L_HORNS, LOOKS };
+#define CELL 192
+#define CELL_Y 112
+#define SHEET_COLS 7
+#define SHEET_W (SHEET_COLS * CELL) /* 1344 x 384 */
+#define SHEET_H (LOOKS / SHEET_COLS * CELL)
+#define SHEET_MAX (3 << 20) /* the biggest file read */
+
+/* how it looks now: the ghost's face, or the sheet's cell */
+static int look(const buddy *b) {
+    static const unsigned char of_mood[] = { L_NORMAL, L_HAPPY, L_PET, L_ANNOY, L_SURPRISE, L_DIZZY, L_BOO, L_SLEEP };
+    const tama *g = &b->tm;
+    if (is_egg(b)) return L_EGG;
+    if (b->mood != NORMAL) return of_mood[b->mood];
+    if (b->on_pet && g->fuss) return L_ANNOY; /* what it wants shows */
+    if (b->on_pet && g->sick) return L_SICK;
+    if (b->on_pet && (g->hunger == 0 || g->fun == 0)) return L_SAD;
+    return b->blink_t > 0 ? L_BLINK : L_NORMAL;
+}
+
+static unsigned sheet[SHEET_W * SHEET_H]; /* premultiplied, so a bilinear sample has no dark fringe */
+static unsigned char sheet_file[SHEET_MAX], sheet_raw[SHEET_H * (1 + SHEET_W * 4)];
+static int sheet_ok;
+
+/* inflate, after zlib's puff: a bit at a time, every read and write bounds-checked. ponytail: a
+ * tenth of a second or so at the start; a table decode if that ever shows */
+typedef struct { const unsigned char *p, *e; unsigned char *o, *s, *oe; unsigned bits; int n, bad; } zs;
+typedef struct { short count[16], sym[288]; } huff;
+static int zbits(zs *z, int k) {
+    while (z->n < k) {
+        if (z->p == z->e) return z->bad = 1, 0;
+        z->bits |= (unsigned)*z->p++ << z->n, z->n += 8;
+    }
+    int v = (int)(z->bits & ((1u << k) - 1));
+    z->bits >>= k, z->n -= k;
+    return v;
+}
+static int zbuild(huff *h, const unsigned char *len, int n) { /* 1 when over-subscribed */
+    short offs[16] = { 0 };
+    for (int i = 0; i < 16; ++i) h->count[i] = 0;
+    for (int i = 0; i < n; ++i) ++h->count[len[i]];
+    for (int i = 1, left = 1; i < 16; ++i)
+        if ((left = left * 2 - h->count[i]) < 0) return 1;
+    for (int i = 1; i < 15; ++i) offs[i + 1] = (short)(offs[i] + h->count[i]);
+    for (int i = 0; i < n; ++i)
+        if (len[i]) h->sym[offs[len[i]]++] = (short)i;
+    return 0;
+}
+static int zdecode(zs *z, const huff *h) {
+    int code = 0, first = 0, index = 0;
+    for (int l = 1; l < 16; ++l) {
+        code |= zbits(z, 1);
+        int c = h->count[l];
+        if (code - c < first) return h->sym[index + (code - first)];
+        index += c, first = (first + c) << 1, code <<= 1;
+    }
+    return z->bad = 1, 0;
+}
+static int zcodes(zs *z, const huff *lc, const huff *dc) { /* a block's codes: 1 when bad */
+    static const short lbase[29] = { 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59,
+                                     67, 83, 99, 115, 131, 163, 195, 227, 258 };
+    static const short lext[29] = { 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0 };
+    static const short dbase[30] = { 1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769,
+                                     1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577 };
+    static const short dext[30] = { 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13 };
+    for (;;) {
+        int s = zdecode(z, lc);
+        if (z->bad) return 1;
+        if (s == 256) return 0;
+        if (s < 256) {
+            if (z->o == z->oe) return 1;
+            *z->o++ = (unsigned char)s;
+            continue;
+        }
+        if ((s -= 257) >= 29) return 1;
+        int n = lbase[s] + zbits(z, lext[s]), d = zdecode(z, dc);
+        if (d >= 30) return 1;
+        d = dbase[d] + zbits(z, dext[d]);
+        if (z->bad || d > z->o - z->s || n > z->oe - z->o) return 1;
+        for (; n; --n, ++z->o) *z->o = z->o[-d];
+    }
+}
+static int zstored(zs *z) {
+    z->bits = 0, z->n = 0; /* to the byte */
+    if (z->e - z->p < 4) return 1;
+    int n = z->p[0] | z->p[1] << 8, inv = z->p[2] | z->p[3] << 8;
+    z->p += 4;
+    if (n != (~inv & 0xffff) || n > z->e - z->p || n > z->oe - z->o) return 1;
+    while (n--) *z->o++ = *z->p++;
+    return 0;
+}
+static int zfixed(zs *z) {
+    static huff lc, dc;
+    static int made;
+    if (!made) {
+        unsigned char len[288];
+        for (int i = 0; i < 288; ++i) len[i] = i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8;
+        zbuild(&lc, len, 288);
+        for (int i = 0; i < 30; ++i) len[i] = 5;
+        zbuild(&dc, len, 30);
+        made = 1;
+    }
+    return zcodes(z, &lc, &dc);
+}
+static int zdynamic(zs *z) {
+    static const unsigned char order[19] = { 16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15 };
+    unsigned char len[286 + 30] = { 0 };
+    huff lc, dc;
+    int nlen = zbits(z, 5) + 257, ndist = zbits(z, 5) + 1, ncode = zbits(z, 4) + 4;
+    if (nlen > 286 || ndist > 30) return 1;
+    for (int i = 0; i < ncode; ++i) len[order[i]] = (unsigned char)zbits(z, 3);
+    if (z->bad || zbuild(&lc, len, 19)) return 1;
+    for (int i = 0; i < nlen + ndist;) {
+        int s = zdecode(z, &lc), rep, v = 0;
+        if (z->bad) return 1;
+        if (s < 16) {
+            len[i++] = (unsigned char)s;
+            continue;
+        }
+        if (s == 16) {
+            if (!i) return 1;
+            v = len[i - 1], rep = 3 + zbits(z, 2);
+        } else rep = s == 17 ? 3 + zbits(z, 3) : 11 + zbits(z, 7);
+        if (i + rep > nlen + ndist) return 1;
+        while (rep--) len[i++] = (unsigned char)v;
+    }
+    if (!len[256] || zbuild(&lc, len, nlen) || zbuild(&dc, len + nlen, ndist)) return 1;
+    return zcodes(z, &lc, &dc);
+}
+/* a zlib stream into out, which it must fill exactly: 1 when it's bad */
+static int zinflate(const unsigned char *p, long n, unsigned char *out, long size) {
+    if (n < 2 || (p[0] & 15) != 8 || (p[0] << 8 | p[1]) % 31 || p[1] & 32) return 1;
+    zs z = { p + 2, p + n, out, out, out + size, 0, 0, 0 };
+    for (int last = 0; !last;) {
+        last = zbits(&z, 1);
+        int type = zbits(&z, 2);
+        if (z.bad || (type == 0 ? zstored(&z) : type == 1 ? zfixed(&z) : type == 2 ? zdynamic(&z) : 1)) return 1;
+    }
+    return z.o != z.oe;
+}
+
+static unsigned be32(const unsigned char *p) { return (unsigned)p[0] << 24 | (unsigned)p[1] << 16 | (unsigned)p[2] << 8 | p[3]; }
+static int is4(const unsigned char *p, const char *s) { return p[0] == s[0] && p[1] == s[1] && p[2] == s[2] && p[3] == s[3]; }
+static int iabs(int x) { return x < 0 ? -x : x; }
+/* buddy.png, its n bytes read into sheet_file: 0 when it's on the sheet, else what's wrong with it.
+ * ponytail: CRCs unchecked; a corrupt file is still bounds-checked, and just fails or looks wrong */
+static const char *sheet_load(long n) {
+    static const unsigned char sig[8] = { 137, 'P', 'N', 'G', 13, 10, 26, 10 };
+    const char *damaged = "buddy.png is damaged";
+    unsigned char *p = sheet_file + 8, *e = sheet_file + n, *z = sheet_file, pal[256][4] = { { 0 } };
+    int type = -1, bpp = 1, npal = 0;
+    sheet_ok = 0;
+    if (n >= SHEET_MAX) return "buddy.png is too big";
+    for (int i = 0; i < 8; ++i)
+        if (n < 8 || sheet_file[i] != sig[i]) return "buddy.png isn't a PNG";
+    for (;;) { /* the chunks: IDAT's packed down to the front as they come, over their own heads */
+        if (e - p < 12 || be32(p) > (unsigned)(e - p - 12)) return damaged;
+        unsigned len = be32(p);
+        const unsigned char *t = p + 4, *d = p + 8;
+        p += 12 + len;
+        if (is4(t, "IHDR")) {
+            if (len != 13) return damaged;
+            if (be32(d) != SHEET_W || be32(d + 4) != SHEET_H) return "buddy.png isn't 1344 x 384";
+            type = d[9], bpp = type == 2 ? 3 : type == 6 ? 4 : 1;
+            if (d[8] != 8 || (type != 2 && type != 3 && type != 6) || d[12]) return "Save buddy.png as 8-bit";
+        } else if (type < 0) return damaged; /* IHDR comes first */
+        else if (is4(t, "PLTE") && len <= 768 && len % 3 == 0)
+            for (npal = 0; npal < (int)len / 3; ++npal)
+                pal[npal][0] = d[npal * 3], pal[npal][1] = d[npal * 3 + 1], pal[npal][2] = d[npal * 3 + 2], pal[npal][3] = 255;
+        else if (is4(t, "tRNS"))
+            for (unsigned i = 0; i < len && i < 256; ++i) pal[i][3] = d[i];
+        else if (is4(t, "IDAT"))
+            for (unsigned i = 0; i < len; ++i) *z++ = d[i]; /* z stays behind d: safe */
+        else if (is4(t, "IEND")) break;
+    }
+    if (type == 3 && !npal) return damaged;
+    long row = 1 + (long)SHEET_W * bpp;
+    if (zinflate(sheet_file, z - sheet_file, sheet_raw, SHEET_H * row)) return damaged;
+    for (int y = 0; y < SHEET_H; ++y) { /* the rows' filters undone, then premultiplied */
+        unsigned char *r = sheet_raw + y * row + 1, *up = y ? r - row : 0, f = r[-1];
+        if (f > 4) return damaged;
+        for (int i = 0; i < SHEET_W * bpp; ++i) {
+            int a = i >= bpp ? r[i - bpp] : 0, b = up ? up[i] : 0, c = up && i >= bpp ? up[i - bpp] : 0;
+            int pa = iabs(b - c), pb = iabs(a - c), pc = iabs(a + b - 2 * c);
+            r[i] = (unsigned char)(r[i] + (f == 1 ? a : f == 2 ? b : f == 3 ? (a + b) / 2 :
+                                          f == 4 ? (pa <= pb && pa <= pc ? a : pb <= pc ? b : c) : 0));
+        }
+    }
+    for (int y = 0; y < SHEET_H; ++y) {
+        const unsigned char *r = sheet_raw + y * row + 1;
+        for (int x = 0; x < SHEET_W; ++x, r += bpp) {
+            const unsigned char *q = bpp == 1 ? pal[*r] : r;
+            unsigned a = bpp == 3 ? 255 : q[3];
+            sheet[y * SHEET_W + x] = a << 24 | (q[0] * a + 127) / 255 << 16 | (q[1] * a + 127) / 255 << 8 | (q[2] * a + 127) / 255;
+        }
+    }
+    sheet_ok = 1;
+    return 0;
+}
+
+/* look l at (x, y) in its own frame, bilinear: its cover, and in c its colour */
+static float sheet_at(int l, float x, float y, col *c) {
+    float u = x + CELL / 2 - 0.5f, v = y + CELL_Y - 0.5f;
+    if (u <= -1 || v <= -1 || u >= CELL || v >= CELL) return 0;
+    int i = (int)(u + 1) - 1, j = (int)(v + 1) - 1;
+    float fu = u - (float)i, fv = v - (float)j, r = 0, g = 0, bl = 0, a = 0;
+    const unsigned *s = sheet + l / SHEET_COLS * CELL * SHEET_W + l % SHEET_COLS * CELL;
+    for (int k = 0; k < 4; ++k) {
+        int ti = i + (k & 1), tj = j + (k >> 1);
+        if (ti < 0 || tj < 0 || ti >= CELL || tj >= CELL) continue;
+        unsigned p = s[tj * SHEET_W + ti];
+        float w = (k & 1 ? fu : 1 - fu) * (k >> 1 ? fv : 1 - fv);
+        a += w * (float)(p >> 24), r += w * (float)(p >> 16 & 255), g += w * (float)(p >> 8 & 255), bl += w * (float)(p & 255);
+    }
+    if (a <= 0) return 0;
+    *c = C(r / a, g / a, bl / a);
+    return a / 255;
+}
+static int sheet_near(const buddy *b, float x, float y) { /* a finger within 8 px of it */
+    col c;
+    for (int k = 0; k < 9; ++k)
+        if (sheet_at(look(b), x + (float)(k % 3 - 1) * 8, y + (float)(k / 3 - 1) * 8, &c) >= 0.5f) return 1;
+    return 0;
 }
 
 /* ---- input ---- */
@@ -466,7 +701,7 @@ static void touch(buddy *b, char what, float X, float Y) {
         to_local(b, X, Y, &lx, &ly);
         b->down = 1, b->drag = 0, b->down_t = 0;
         b->fx = b->sx = X, b->fy = b->sy = Y;
-        b->on = body_dist(b, lx, ly) < 8;
+        b->on = sheet_ok ? sheet_near(b, lx, ly) : body_dist(b, lx, ly) < 8;
         b->ox = X - b->x, b->oy = Y - b->y;
         if (b->on) b->vsq -= 1.5f;
         else sparks(b, X, Y, 6, 70); /* the eyes follow it (step) */
@@ -722,6 +957,7 @@ static void step(buddy *b, float dt) {
     b->menu_t += dt;
     b->t += dt, b->idle += dt, b->down_t += dt, b->wheel_t += dt, b->pal_t += dt;
     if (b->on_pet) pet_step(b, dt);
+    else if (b->say_t > 0) b->say_t -= dt; /* buddy.png's note */
     if (b->mood_t > 0 && (b->mood_t -= dt) <= 0) moods(b, b->next, b->next_t, NORMAL, 0);
     if (b->mood == NORMAL && b->idle > SLEEP_S && !b->down && !is_egg(b)) moods(b, SLEEP, 0, NORMAL, 0);
     if (b->down && b->on && !b->drag && b->down_t > PET_S) {
@@ -845,23 +1081,19 @@ static void glow_add(unsigned *px, col c, float a) {
 enum { E_OPEN, E_HAPPY, E_SHUT, E_SLEEP, E_ANNOY, E_DIZZY };
 enum { M_CAT, M_TONGUE, M_O, M_BOO, M_SMILE, M_FROWN };
 
-/* the face over the body at (x, y), in the buddy's frame: its colour over c, and how much */
-static col face(const buddy *b, const palette *P, float x, float y, col c) {
-    int m = b->mood, eyes = E_OPEN, mouth = M_CAT, blush = 0;
+/* the face over the body at (x, y), in the buddy's frame, looking l: its colour over c */
+static col face(const buddy *b, const palette *P, int l, float x, float y, col c) {
+    int eyes = E_OPEN, mouth = M_CAT, blush = 0;
     float big = 1;
-    if (m == HAPPY) eyes = E_HAPPY, mouth = M_SMILE, blush = 1;
-    if (m == PET) eyes = E_SHUT, blush = 1;
-    if (m == SLEEP) eyes = E_SLEEP, mouth = M_O;
-    if (m == ANNOY) eyes = E_ANNOY, mouth = M_TONGUE;
-    if (m == SURPRISE) big = 1.18f, mouth = M_O;
-    if (m == DIZZY) eyes = E_DIZZY, mouth = M_CAT;
-    if (m == BOO) eyes = E_ANNOY, mouth = M_BOO;
-    if (b->on_pet && m == NORMAL) { /* what it wants shows */
-        const tama *g = &b->tm;
-        if (g->hunger == 0 || g->fun == 0) mouth = M_FROWN;
-        if (g->sick) eyes = E_SLEEP, mouth = M_FROWN;
-        if (g->fuss) eyes = E_ANNOY, mouth = M_TONGUE;
-    }
+    if (l == L_HAPPY) eyes = E_HAPPY, mouth = M_SMILE, blush = 1;
+    if (l == L_PET) eyes = E_SHUT, blush = 1;
+    if (l == L_SLEEP) eyes = E_SLEEP, mouth = M_O;
+    if (l == L_ANNOY) eyes = E_ANNOY, mouth = M_TONGUE;
+    if (l == L_SURPRISE) big = 1.18f, mouth = M_O;
+    if (l == L_DIZZY) eyes = E_DIZZY;
+    if (l == L_BOO) eyes = E_ANNOY, mouth = M_BOO;
+    if (l == L_SAD) mouth = M_FROWN;
+    if (l == L_SICK) eyes = E_SLEEP, mouth = M_FROWN;
     float fx = x - b->lx * 9, fy = y - (HEAD_Y + 6) - b->ly * 6;
     float open = 1;
     if (b->blink_t > 0 && eyes == E_OPEN) open = maxf(0.08f, absf(b->blink_t / 0.08f - 1));
@@ -956,6 +1188,24 @@ static col shade(const palette *P, float x, float y, float d, float gx, float gy
     c = cadd(c, C(1, 1, 1), 0.28f * expneg(sh * sh / 260));
     return c;
 }
+/* the ghost's colour at a point inside, looking l: shade's, speckled on an egg, faced otherwise */
+static col body_col(const buddy *b, const palette *P, int l, float x, float y, float d, float gx, float gy) {
+    col bc = shade(P, x, y, d, gx, gy);
+    if (l == L_EGG) {
+        float spot = minf(minf(ellipse(x + 22, y + 26, 10, 12), ellipse(x - 20, y + 2, 12, 10)), ellipse(x + 8, y - 36, 9, 8));
+        return cmix(bc, P->glow, 0.55f * sat(0.5f - spot));
+    }
+    return l < L_EGG && y < HEAD_Y + 50 && y > HEAD_Y - 30 && absf(x) < 58 ? face(b, P, l, x, y, bc) : bc;
+}
+static col tint(const buddy *b, col c, float flash) { /* green when sick, white in the recolour's flash */
+    if (b->on_pet && b->tm.sick) c = cmix(c, C(.45f, .75f, .35f), 0.32f);
+    return cmix(c, C(1, 1, 1), flash * 0.6f);
+}
+static void blend_look(const buddy *b, unsigned *px, int l, float x, float y, float flash) {
+    col c;
+    float a = sheet_at(l, x, y, &c);
+    if (a > 0) blend(px, tint(b, c, flash), a);
+}
 
 static void draw_buddy(const buddy *b, unsigned *fb) {
     const palette *P = &pals[b->pal];
@@ -982,6 +1232,18 @@ static void draw_buddy(const buddy *b, unsigned *fb) {
     int x0 = (int)maxf(0, ox - ew), x1 = (int)minf(W, ox + ew + 1);
     int y0 = (int)maxf(0, oy - eh), y1 = (int)minf(H, oy + eh + 1);
     xform f = frame_of(b);
+    if (sheet_ok) { /* a buddy of your own: its look's cell, and an adult's halo or horns over it */
+        int l = look(b), crown = !b->on_pet || !b->tm.form ? -1 : b->tm.form > 0 ? L_HALO : L_HORNS;
+        for (int Y = y0; Y < y1; ++Y) {
+            float x, y;
+            to_local(b, (float)x0, (float)Y, &x, &y);
+            for (int X = x0; X < x1; ++X, x += f.ux, y += f.uy) {
+                blend_look(b, &fb[Y * W + X], l, x, y, flash);
+                if (crown >= 0) blend_look(b, &fb[Y * W + X], crown, x, y, flash);
+            }
+        }
+        return;
+    }
     /* The distance on a GRID px lattice, bilinear between: a distance field is near enough linear.
      * Only the edge's pixels, where coverage needs it exact, ask body_dist again; the lattice's
      * slope lights the body. */
@@ -995,7 +1257,7 @@ static void draw_buddy(const buddy *b, unsigned *fb) {
         for (int i = 0; i < gw; ++i, x += f.ux * GRID, y += f.uy * GRID) grid[j * gw + i] = body_dist(b, x, y);
     }
     float glow_k = 0.42f + flash * 0.5f;
-    int egg = is_egg(b), sick = b->on_pet && b->tm.sick;
+    int l = look(b);
     for (int Y = y0; Y < y1; ++Y) {
         float x, y, v = (float)((Y - y0) % GRID) / GRID;
         to_local(b, (float)x0, (float)Y, &x, &y);
@@ -1014,18 +1276,14 @@ static void draw_buddy(const buddy *b, unsigned *fb) {
                 if (d * S > 1) continue;
             }
             /* the slope across three cells (6 px a unit): it fades over a ridge, which rounds */
-            col bc = shade(P, x, y, d, g[2] - g[-1] + g[gw + 2] - g[gw - 1], g[2 * gw] - g[-gw] + g[2 * gw + 1] - g[1 - gw]);
-            if (egg) { /* speckled, not faced */
-                float spot = minf(minf(ellipse(x + 22, y + 26, 10, 12), ellipse(x - 20, y + 2, 12, 10)), ellipse(x + 8, y - 36, 9, 8));
-                bc = cmix(bc, P->glow, 0.55f * sat(0.5f - spot));
-            } else if (y < HEAD_Y + 50 && y > HEAD_Y - 30 && absf(x) < 58)
-                bc = face(b, P, x, y, bc);
-            if (sick) bc = cmix(bc, C(.45f, .75f, .35f), 0.32f);
-            bc = cmix(bc, C(1, 1, 1), flash * 0.6f);
-            blend(px, bc, 0.5f - d * S);
+            col bc = body_col(b, P, l, x, y, d, g[2] - g[-1] + g[gw + 2] - g[gw - 1], g[2 * gw] - g[-gw] + g[2 * gw + 1] - g[1 - gw]);
+            blend(px, tint(b, bc, flash), 0.5f - d * S);
         }
     }
+}
 
+static void draw_parts(const buddy *b, unsigned *fb) {
+    const palette *P = &pals[b->pal];
     for (int i = 0; i < PARTS; ++i) {
         const part *q = &b->p[i];
         if (q->life <= 0) continue;
@@ -1270,8 +1528,10 @@ static void render(const buddy *b, unsigned *fb) {
     if (backdrop_pal != b->pal) make_backdrop(b->pal);
     for (int i = 0; i < W * H; ++i) fb[i] = backdrop[i];
     if (b->on_pet) draw_pet_under(b, fb);
-    if (!b->on_pet || !b->tm.gone) draw_buddy(b, fb);
+    if (!b->on_pet || !b->tm.gone) draw_buddy(b, fb), draw_parts(b, fb);
     if (b->on_pet) draw_pet(b, fb);
+    else if (b->say_t > 0) /* buddy.png's note */
+        text(fb, (W - text_w(b->say)) / 2, SAY_Y, b->say, cmul(pals[b->pal].glow, sat(b->say_t * 3)));
     if (b->menu) draw_menu(b, fb);
 }
 
@@ -1292,12 +1552,65 @@ static unsigned canvas[W * H];
 #include <stdlib.h>
 
 #include <assert.h>
+#include <string.h>
 #define NOW 1800000000
 /* the width the glass hides at each end of row y, as Q2 Pod's tools/ipod.py corner_inset */
 static float glass(int y) {
     float d = maxf(maxf((float)(GLASS_R - y), (float)(y - (H - GLASS_R))), 0);
     return GLASS_R - fsqrt(GLASS_R * GLASS_R - d * d);
 }
+static const char *sheet_read(const char *path) { /* 0 when it's on the sheet, else why not */
+    FILE *in = fopen(path, "rb");
+    if (!in) return "buddy.png: no such file";
+    long n = (long)fread(sheet_file, 1, SHEET_MAX, in);
+    fclose(in);
+    return sheet_load(n);
+}
+/* The ghost's looks on a sheet, RGBA, at rest and blue: buddy-template.png (preview.sh) */
+static float look_dist(const buddy *b, int l, float x, float y) {
+    return l == L_HALO ? crown_dist(1, x, y) : l == L_HORNS ? crown_dist(-1, x, y) : body_dist(b, x, y);
+}
+static void template(unsigned char *rgba) {
+    static buddy b;
+    for (int l = 0; l < LOOKS; ++l) {
+        init(&b, 0);
+        b.arml = b.armr = 0.12f, b.on_pet = l == L_EGG, b.blink_t = l == L_BLINK ? 0.08f : 0;
+        for (int j = 0; j < CELL; ++j)
+            for (int i = 0; i < CELL; ++i) {
+                float x = (float)i + 0.5f - CELL / 2, y = (float)j + 0.5f - CELL_Y, d = look_dist(&b, l, x, y);
+                float gx = 2 * (look_dist(&b, l, x + 3, y) - look_dist(&b, l, x - 3, y));
+                float gy = 2 * (look_dist(&b, l, x, y + 3) - look_dist(&b, l, x, y - 3));
+                unsigned char *o = rgba + ((l / SHEET_COLS * CELL + j) * SHEET_W + l % SHEET_COLS * CELL + i) * 4;
+                unsigned p = d < 0.5f ? pack(body_col(&b, &pals[0], l, x, y, d, gx, gy)) : 0;
+                o[0] = (unsigned char)(p >> 16), o[1] = (unsigned char)(p >> 8), o[2] = (unsigned char)p;
+                o[3] = (unsigned char)(sat(0.5f - d) * 255 + 0.5f);
+                if (!o[3]) o[0] = o[1] = o[2] = 0;
+            }
+    }
+}
+static unsigned char *put32(unsigned char *p, unsigned v) {
+    p[0] = (unsigned char)(v >> 24), p[1] = (unsigned char)(v >> 16), p[2] = (unsigned char)(v >> 8), p[3] = (unsigned char)v;
+    return p + 4;
+}
+/* a PNG in stored blocks, as no encoder here writes them: clear, but for its last pixel */
+static long png_stored(unsigned char *f) {
+    long raw = SHEET_H * (1 + SHEET_W * 4L);
+    unsigned char *p = f;
+    memcpy(p, "\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR", 16), p = put32(put32(p + 16, SHEET_W), SHEET_H);
+    *p++ = 8, *p++ = 6, *p++ = 0, *p++ = 0, *p++ = 0, p = put32(p, 0); /* RGBA; the CRC, unchecked */
+    p = put32(p, (unsigned)(2 + raw + (raw + 65534) / 65535 * 5 + 4)), memcpy(p, "IDAT\x78\x01", 6), p += 6;
+    for (long left = raw, k; left; left -= k) {
+        k = left < 65535 ? left : 65535;
+        *p++ = left == k, *p++ = (unsigned char)k, *p++ = (unsigned char)(k >> 8);
+        *p++ = (unsigned char)~k, *p++ = (unsigned char)(~k >> 8);
+        memset(p, 0, (size_t)k), p += k;
+    }
+    p[-4] = 10, p[-3] = 20, p[-2] = 30, p[-1] = 255;
+    p = put32(put32(p, 0), 0); /* the Adler and CRC, unchecked */
+    memcpy(p, "\0\0\0\0IEND\0\0\0\0", 12);
+    return p + 12 - f;
+}
+
 /* the pet's rules: ./fidget check */
 static int check(void) {
     static buddy b;
@@ -1413,6 +1726,52 @@ static int check(void) {
     assert(tama_ok(&bad));
     bad.stage = 9;
     assert(!tama_ok(&bad));
+    /* what it wants shows on its face, the worst first */
+    b.on_pet = 1, b.mood = NORMAL, g->stage = BABY, g->gone = 0, g->fuss = 5, g->sick = 2, g->hunger = 0;
+    assert(look(&b) == L_ANNOY);
+    g->fuss = 0;
+    assert(look(&b) == L_SICK);
+    g->sick = 0;
+    assert(look(&b) == L_SAD);
+
+    /* buddy.png: the template, as ffmpeg compressed it (every row filter but Avg), decodes to the
+     * looks it was made from */
+    static unsigned char want[SHEET_W * SHEET_H * 4], png[SHEET_MAX];
+    template(want);
+    assert(!sheet_read("buddy-template.png") && sheet_ok);
+    for (int i = 0; i < SHEET_W * SHEET_H; ++i) {
+        int a = (int)(sheet[i] >> 24);
+        assert(abs(a - want[i * 4 + 3]) <= 1);
+        for (int k = 0; a == 255 && k < 3; ++k) assert(abs((int)(sheet[i] >> (16 - 8 * k) & 255) - want[i * 4 + k]) <= 1);
+    }
+    /* stored blocks, and the last pixel lands */
+    long pn = png_stored(sheet_file);
+    assert(!sheet_load(pn) && sheet[0] == 0 && sheet[SHEET_W * SHEET_H - 1] == 0xff0a141eu);
+    /* row 1 under Avg, which ffmpeg never picks: its second pixel half its first (the first block's
+     * bytes start at 48) */
+    png_stored(sheet_file), sheet_file[48 + 5377] = 3, memcpy(sheet_file + 48 + 5378, "\x0a\x14\x1e\xff", 4);
+    assert(!sheet_load(pn) && sheet[SHEET_W] == 0xff0a141eu && sheet[SHEET_W + 1] == 0x7f020507u);
+    /* a bad file says why, and leaves the ghost */
+    png_stored(sheet_file), sheet_file[19] ^= 1;
+    assert(strstr(sheet_load(pn), "1344") && !sheet_ok);
+    png_stored(sheet_file), sheet_file[24] = 16;
+    assert(strstr(sheet_load(pn), "8-bit"));
+    png_stored(sheet_file), sheet_file[1] = 'J';
+    assert(strstr(sheet_load(pn), "PNG"));
+    assert(strstr(sheet_load(SHEET_MAX), "big"));
+    /* cut short anywhere it's damaged; a byte wrong anywhere, it says so or decodes, but never strays
+     * (build with -fsanitize=address,undefined to see) */
+    FILE *in = fopen("buddy-template.png", "rb");
+    pn = (long)fread(png, 1, SHEET_MAX, in);
+    fclose(in);
+    for (int i = 0; i < 100; ++i) {
+        long cut = pn * i / 100;
+        memcpy(sheet_file, png, (size_t)cut);
+        assert(sheet_load(cut) && !sheet_ok);
+        memcpy(sheet_file, png, (size_t)pn);
+        sheet_file[(long)(frand() * (float)pn)] ^= (unsigned char)(1 + frand() * 254);
+        sheet_load(pn);
+    }
     puts("ok");
     return 0;
 }
@@ -1420,6 +1779,15 @@ static int check(void) {
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : "/tmp/fidget";
     if (dir[0] == 'c') return check();
+    if (!strcmp(dir, "template") && argc > 2) { /* template out.pam */
+        static unsigned char rgba[SHEET_W * SHEET_H * 4];
+        template(rgba);
+        FILE *o = fopen(argv[2], "wb");
+        if (!o) return 1;
+        fprintf(o, "P7\nWIDTH %d\nHEIGHT %d\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n", SHEET_W, SHEET_H);
+        fwrite(rgba, 1, sizeof rgba, o);
+        return fclose(o) != 0;
+    }
     int pal = argc > 2 ? atoi(argv[2]) : 0;
     static const struct { float at; const char *in; } script[] = {
         { 1.6f, "t d 187 190" }, { 1.7f, "t u 187 190" },              /* tummy tap */
@@ -1438,6 +1806,8 @@ int main(int argc, char **argv) {
     static buddy b;
     init(&b, pal);
     b.now = NOW;
+    const char *why = argc > 5 ? sheet_read(argv[5]) : 0; /* preview.sh's sheet: a buddy of your own */
+    if (why) say(&b, why), b.say_t = 6;
     char path[256];
     int pet = argc > 4 && atoi(argv[4]); /* preview.sh's "pet": its Tamagotchi session */
     static const struct { float at; const char *in; } pet_script[] = {
@@ -1545,16 +1915,18 @@ static int now_s(void) {
     return (int)ts[0];
 }
 
-/* Kept beside the binary: "<dir>/state", the colour's digit and Tamagotchi's; "<dir>/pet", the pet */
-static char state_path[200], pet_path[200], pet_new[200];
+/* Kept beside the binary: "<dir>/state", the colour's digit and Tamagotchi's; "<dir>/pet", the pet;
+ * and the user's own "<dir>/buddy.png", read only */
+static char state_path[200], pet_path[200], pet_new[200], sheet_path[200];
 static void paths(const char *argv0) {
     int n = 0, slash = -1;
     for (; argv0[n] && n < 180; ++n)
         if (argv0[n] == '/') slash = n;
-    for (int i = 0; i <= slash; ++i) state_path[i] = pet_path[i] = pet_new[i] = argv0[i];
+    for (int i = 0; i <= slash; ++i) state_path[i] = pet_path[i] = pet_new[i] = sheet_path[i] = argv0[i];
     put(state_path + slash + 1, "state");
     put(pet_path + slash + 1, "pet");
     put(pet_new + slash + 1, "pet.new");
+    put(sheet_path + slash + 1, "buddy.png");
 }
 static void load(buddy *b) {
     char c[2] = { 0, 0 };
@@ -1567,6 +1939,13 @@ static void load(buddy *b) {
     if (fd >= 0) n = sc(SYS_read, fd, (long)&b->tm, sizeof b->tm, 0, 0, 0), sc(SYS_close, fd, 0, 0, 0, 0, 0);
     if (n != (long)sizeof b->tm || !tama_ok(&b->tm)) b->tm = (tama){ 0 };
     if (b->on_pet && b->tm.magic != TAMA_MAGIC) tama_new(&b->tm, b->now);
+    fd = (int)sc(SYS_open, (long)sheet_path, O_CLOEXEC, 0, 0, 0, 0);
+    if (fd < 0) return; /* none: the ghost, nothing said */
+    long k;
+    for (n = 0; n < SHEET_MAX && (k = sc(SYS_read, fd, (long)(sheet_file + n), SHEET_MAX - n, 0, 0, 0)) > 0;) n += k;
+    sc(SYS_close, fd, 0, 0, 0, 0, 0);
+    const char *why = sheet_load(n);
+    if (why) say(b, why), b->say_t = 6;
 }
 static void save_state(const buddy *b) {
     char c[2] = { (char)('0' + b->pal), b->on_pet ? '1' : '0' };

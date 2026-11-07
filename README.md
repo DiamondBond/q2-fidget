@@ -13,6 +13,7 @@ Install it from **System settings → App Store** and it shows up in **Library �
 | Make it dizzy | Spin the wheel fast |
 | Make it say boo | Press Centre |
 | Change its colour, turn on Tamagotchi, or quit | Press Return for the menu |
+| Make it your own | Paint a `buddy.png` (see [Your own buddy](#your-own-buddy)) |
 
 Play/Pause and the side buttons keep controlling the music. Leave it alone and it dozes off; after two
 minutes without a touch it closes, unless Smart Awake is on (System settings → Display →
@@ -43,6 +44,41 @@ A need left unanswered for an hour is one care mistake. An Adult raised with at 
 mistake and 50% discipline wears a halo; one with five or more grows horns. Starving or sick for about three
 days awake, it floats away, and Centre brings the next egg.
 
+## Your own buddy
+
+Paint your own and Buddy shows it instead of the ghost: save it as `buddy.png` in the `.fidget` folder on the
+microSD card, beside `q2-fidget`, and open Buddy. (`.fidget` is hidden on a Mac; Cmd+Shift+. in Finder shows
+it.) Updates keep it; App Store → Remove deletes it with the folder.
+
+![The template's 14 cells, numbered](buddy-guide.png)
+
+Start from [buddy-template.png](buddy-template.png), the ghost itself: **1344 x 384**, an 8-bit PNG (RGBA, RGB
+or indexed), 7 x 2 cells of 192 px in the order above. Each cell's point (96, 112) is your buddy's middle, where
+it floats, turns and squashes. Clear pixels are see-through and soft edges blend. Baby to Adult are the same
+cells, smaller.
+
+| Cell | Shows when |
+| --- | --- |
+| 1 Normal | Most of the time |
+| 2 Blink | For a moment, every few seconds |
+| 3 Happy | Giggling, booped, let go after a fling, fed |
+| 4 Petted | While you pet it |
+| 5 Surprised | Picked up, just booped, woken |
+| 6 Annoyed | Annoyed, refusing or scolded, and acting up in Tamagotchi |
+| 7 Boo | Saying boo |
+| 8 Dizzy | Dizzy |
+| 9 Asleep | Dozing, or in bed |
+| 10 Sad | Hungry or bored, in Tamagotchi |
+| 11 Sick | Sick, in Tamagotchi; Buddy tints it green |
+| 12 Egg | Before it hatches |
+| 13 Halo | Over an Adult raised with care, on its face's cell |
+| 14 Horns | Over an Adult raised with five or more mistakes |
+
+It hops, squashes, tilts and flies as the ghost does, but has no waving arms, rippling hem or eyes that follow
+your finger, and no glow unless you paint one. A tap above its middle boops it; lower down, it giggles. Colour
+recolours the sparkles and menus, not your painting. A file Buddy can't use leaves the ghost, with a line at the
+top saying why.
+
 ## How it runs
 
 Q2 Pod lists a card app whose `q2app` says `game=1` in Games instead of Streaming. A Games row
@@ -58,13 +94,16 @@ input as text datagrams on `/tmp/q2-fidget.input.sock`:
 The program is one C file with no libraries: it makes its own syscalls and draws on `/dev/fb0`
 (320 x 375, the view turned clockwise, two pages). Its colour and whether Tamagotchi is on are kept in
 `.fidget/state`, and the pet in `.fidget/pet` with the time it was saved, so the next start plays through the
-minutes since by the Q2's clock.
+minutes since by the Q2's clock. It reads `.fidget/buddy.png` when it starts, with its own PNG decoder.
 
 ## Building
 
 `./build.sh` makes `dist/fidget.zip` (needs `clang` and `ld.lld`). `./preview.sh` renders a
 scripted session on the PC to `preview.mp4` and `preview.gif`, and `./preview.sh 0 pet` one in Tamagotchi
-mode. `cc -DHOST fidget.c -o /tmp/buddy && /tmp/buddy check` tests the pet's rules. `tools/font.py`
+mode; a third argument, a PNG, previews it as `buddy.png`. It also renders `buddy-template.png` and
+`buddy-guide.png` from the ghost (needs `ffmpeg` with `drawtext`). `cc -DHOST fidget.c -o /tmp/buddy && /tmp/buddy check`,
+run here, tests the pet's rules and the PNG decoder, on `buddy-template.png`; build it with
+`-fsanitize=address,undefined` to see that a damaged file never reads or writes astray. `tools/font.py`
 regenerates `font.h` (needs Pillow).
 
 The program, its folder and this repo keep the name `q2-fidget`: the App Store takes an app's folder from its
