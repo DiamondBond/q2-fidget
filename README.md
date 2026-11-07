@@ -53,7 +53,7 @@ it.) Updates keep it; App Store → Remove deletes it with the folder.
 ![The template's 14 cells, numbered](buddy-guide.png)
 
 Start from [buddy-template.png](buddy-template.png), the ghost itself: **1344 x 384**, a PNG, not interlaced,
-grey or indexed at any depth and anything else at 8 bits a channel, 7 x 2 cells of 192 px in the order above.
+at 8 bits a channel (grey or indexed may use fewer), 7 x 2 cells of 192 px in the order above.
 Each cell's point (96, 112) is your buddy's middle, where it floats, turns and squashes. Clear pixels are
 see-through and soft edges blend. Baby to Adult are the same cells, smaller.
 

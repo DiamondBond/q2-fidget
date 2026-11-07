@@ -1484,7 +1484,7 @@ static void draw_pet_under(const buddy *b, unsigned *fb) { /* what lies on the g
         stamp(fb, I_POOP, i < 2 ? 48 + i * 36 : 327 - (i - 2) * 36, 244, C(.62f, .46f, .28f));
 }
 /* The line under the hearts, one thing at a time: what's wrong with buddy.png, its few seconds first,
- * then the game's round or what the pet says. The toy's only ever has the note. */
+ * then the game's round or what the pet says, but not once it's gone. The toy's only has the note. */
 static void say_line(const buddy *b, unsigned *fb) {
     const palette *P = &pals[b->pal];
     if (b->note_t > 0)
@@ -1497,7 +1497,7 @@ static void say_line(const buddy *b, unsigned *fb) {
         char won[16];
         e = put(won, "Won "), putn(e, b->wins);
         text(fb, (W - text_w(won)) / 2, 244, won, C(.667f, .667f, .667f));
-    } else if (b->say_t > 0)
+    } else if (b->say_t > 0 && !b->tm.gone)
         text(fb, (W - text_w(b->say)) / 2, SAY_Y, b->say, cmul(P->glow, sat(b->say_t * 3)));
 }
 static void draw_pet(const buddy *b, unsigned *fb) {
@@ -1764,11 +1764,16 @@ static int check(void) {
     assert(b.say_t == 2);
     step(&b, 0.6f), step(&b, 0.1f);
     assert(b.note_t <= 0 && b.say_t < 2);
-    /* the note shows on the gone screen too */
+    /* the note has the line over the game's round, and on the gone screen, where nothing else does */
     static unsigned shot[W * H];
-    g->gone = 1, b.note = "buddy.png is damaged", render(&b, shot);
-    b.note_t = 3, render(&b, canvas), b.note_t = 0, g->gone = 0;
+    b.say_t = 0, b.round = 1, b.note = "buddy.png is damaged", render(&b, shot);
+    b.note_t = 3, render(&b, canvas);
     assert(memcmp(shot + SAY_Y * W, canvas + SAY_Y * W, FONT_H * W * sizeof *canvas));
+    b.round = 0, b.note_t = 0, g->gone = 1, say(&b, "It grew!"), render(&b, shot);
+    for (int i = SAY_Y * W; i < (SAY_Y + FONT_H) * W; ++i) assert(shot[i] == backdrop[i]);
+    b.note_t = 3, render(&b, canvas);
+    assert(memcmp(shot + SAY_Y * W, canvas + SAY_Y * W, FONT_H * W * sizeof *canvas));
+    b.note = 0, b.note_t = 0, b.say_t = 0, g->gone = 0;
     pet_toggle(&b);
     assert(!b.on_pet && b.say_t == 0);
 
