@@ -1772,6 +1772,7 @@ static int check(void) {
     b.round = 0, b.note_t = 0, g->gone = 1, say(&b, "It grew!"), step(&b, 0.01f);
     assert(b.say_t == 0); /* gone, it's said, and nothing's left for Centre's next egg */
     render(&b, shot), b.note_t = 3, render(&b, canvas);
+    for (int i = SAY_Y * W; i < (SAY_Y + FONT_H) * W; ++i) assert(shot[i] == backdrop[i]);
     assert(memcmp(shot + SAY_Y * W, canvas + SAY_Y * W, FONT_H * W * sizeof *canvas));
     b.note = 0, b.note_t = 0, b.say_t = 0, g->gone = 0;
     pet_toggle(&b);
