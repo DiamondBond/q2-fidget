@@ -502,14 +502,15 @@ static int zinflate(const unsigned char *p, long n, unsigned char *out, long siz
 static unsigned be32(const unsigned char *p) { return (unsigned)p[0] << 24 | (unsigned)p[1] << 16 | (unsigned)p[2] << 8 | p[3]; }
 static int is4(const unsigned char *p, const char *s) { return p[0] == s[0] && p[1] == s[1] && p[2] == s[2] && p[3] == s[3]; }
 /* buddy.png, its n bytes read into sheet_file: 0 when it's on the sheet, else what's wrong with it.
- * 8 bits a channel, grey or colour, with alpha or tRNS's clear colour, or indexed at 1 to 8 bits.
+ * Grey or indexed at 1 to 8 bits (grey as a palette of greys), else 8 bits a channel; with alpha, or
+ * tRNS's clear entries or colour.
  * ponytail: CRCs unchecked; a corrupt file is still bounds-checked, and just fails or looks wrong */
 static const char *sheet_load(long n) {
     static const unsigned char sig[8] = { 137, 'P', 'N', 'G', 13, 10, 26, 10 };
     const char *damaged = "buddy.png is damaged";
     unsigned char *p = sheet_file + 8, *e = sheet_file + n, *z = sheet_file;
-    unsigned pal[256] = { 0 };                           /* indexed: ARGB */
-    int type = -1, depth = 8, ch = 1, npal = 0, key = -1; /* key: tRNS's clear colour, as RGB */
+    unsigned pal[256] = { 0 };                           /* grey or indexed: ARGB */
+    int type = -1, depth = 8, ch = 1, npal = 0, key = -1; /* key: RGB's clear colour, from tRNS */
     sheet_ok = 0;
     if (n >= SHEET_MAX) return "buddy.png is too big";
     for (int i = 0; i < 8; ++i)
@@ -525,14 +526,16 @@ static const char *sheet_load(long n) {
             depth = d[8], type = d[9], ch = type == 2 ? 3 : type == 4 ? 2 : type == 6 ? 4 : 1;
             if (type == 1 || type == 5 || type > 6) return damaged;
             if (d[12]) return "buddy.png is interlaced";
-            if (depth != 8 && (type != 3 || (depth != 1 && depth != 2 && depth != 4))) return "Save buddy.png as 8-bit";
+            if (depth != 8 && (ch != 1 || (depth != 1 && depth != 2 && depth != 4))) return "Save buddy.png as 8-bit";
+            for (npal = 0; type == 0 && npal < 1 << depth; ++npal) /* ImageMagick's 1-bit black on clear */
+                pal[npal] = 0xff000000u | (unsigned)(npal * 255 / ((1 << depth) - 1)) * 0x10101u;
         } else if (type < 0) return damaged; /* IHDR comes first */
         else if (is4(t, "PLTE") && len <= 768 && len % 3 == 0)
             for (npal = 0; npal < (int)len / 3; ++npal)
                 pal[npal] = 0xff000000u | (unsigned)d[npal * 3] << 16 | (unsigned)d[npal * 3 + 1] << 8 | d[npal * 3 + 2];
         else if (is4(t, "tRNS")) {
             for (unsigned i = 0; type == 3 && i < len && i < 256; ++i) pal[i] = (pal[i] & 0xffffff) | (unsigned)d[i] << 24;
-            if (type == 0 && len == 2) key = d[1] * 0x10101;
+            if (type == 0 && len == 2 && !d[0]) pal[d[1]] &= 0xffffff;
             if (type == 2 && len == 6) key = d[1] << 16 | d[3] << 8 | d[5];
         } else if (is4(t, "IDAT"))
             for (unsigned i = 0; i < len; ++i) *z++ = d[i]; /* z stays behind d: safe */
@@ -552,8 +555,8 @@ static const char *sheet_load(long n) {
                                           f == 4 ? (pa <= pb && pa <= pc ? a : pb <= pc ? b : c) : 0));
         }
         for (int x = 0; x < SHEET_W; ++x) {
-            const unsigned char *s = r + x * ch; /* grey's one channel serves for all three */
-            unsigned c = type == 3 ? pal[(r[x * depth / 8] >> (8 - depth - x * depth % 8)) & ((1 << depth) - 1)]
+            const unsigned char *s = r + x * ch; /* grey with alpha: its one channel serves for all three */
+            unsigned c = ch == 1 ? pal[(r[x * depth / 8] >> (8 - depth - x * depth % 8)) & ((1 << depth) - 1)]
                                    : (type & 4 ? s[ch - 1] : 255u) << 24 | (unsigned)s[0] << 16 |
                                          (unsigned)s[type & 2 ? 1 : 0] << 8 | s[type & 2 ? 2 : 0];
             unsigned a = (int)(c & 0xffffff) == key ? 0 : c >> 24;
@@ -669,7 +672,7 @@ static int menu_row(float X, float Y) { /* the row at a touch, else -1 */
 /* Tamagotchi on: its pet as it was left, whose clock stopped when it was turned off */
 static void pet_toggle(buddy *b) {
     b->on_pet = !b->on_pet;
-    b->round = b->stats = 0;
+    b->round = b->stats = 0, b->say_t = 0; /* off, nothing counts it down */
     b->save = 1;
     if (b->on_pet) {
         if (b->tm.magic == TAMA_MAGIC) b->tm.at = b->now;
@@ -954,7 +957,7 @@ static void pet_step(buddy *b, float dt) {
     if (asleep && !g->asleep) moods(b, SURPRISE, 0.45f, NORMAL, 0), say(b, "Good morning!");
     if (g->asleep && b->mood == NORMAL) moods(b, SLEEP, 0, NORMAL, 0);
     if (g->gone) b->round = 0;
-    if (b->say_t > 0) b->say_t -= dt;
+    if (b->say_t > 0 && b->note_t <= 0) b->say_t -= dt; /* it waits for buddy.png's note */
     if (b->gift_t > 0) b->gift_t -= dt;
     if (b->pet_t > 0) b->pet_t -= dt;
     if (b->round && b->shown > 0 && (b->shown -= dt) <= 0 && ++b->round > PLAY_ROUNDS) { /* the game's end */
@@ -1480,6 +1483,23 @@ static void draw_pet_under(const buddy *b, unsigned *fb) { /* what lies on the g
     for (int i = 0; i < b->tm.poops; ++i)
         stamp(fb, I_POOP, i < 2 ? 48 + i * 36 : 327 - (i - 2) * 36, 244, C(.62f, .46f, .28f));
 }
+/* The line under the hearts, one thing at a time: the game's round, what's wrong with buddy.png, or
+ * what the pet says. The toy's only ever has the note. */
+static void say_line(const buddy *b, unsigned *fb) {
+    const palette *P = &pals[b->pal];
+    if (b->round) {
+        char line[32];
+        char *e = put(line, "Which way? ");
+        e = putn(e, b->round), e = put(e, " of "), putn(e, PLAY_ROUNDS);
+        text(fb, (W - text_w(line)) / 2, SAY_Y, line, P->glow);
+        char won[16];
+        e = put(won, "Won "), putn(e, b->wins);
+        text(fb, (W - text_w(won)) / 2, 244, won, C(.667f, .667f, .667f));
+    } else if (b->note_t > 0)
+        text(fb, (W - text_w(b->note)) / 2, SAY_Y, b->note, cmul(P->glow, sat(b->note_t * 3)));
+    else if (b->say_t > 0)
+        text(fb, (W - text_w(b->say)) / 2, SAY_Y, b->say, cmul(P->glow, sat(b->say_t * 3)));
+}
 static void draw_pet(const buddy *b, unsigned *fb) {
     const palette *P = &pals[b->pal];
     const tama *g = &b->tm;
@@ -1510,16 +1530,8 @@ static void draw_pet(const buddy *b, unsigned *fb) {
         const char *a = "It floated away...", *c = "Centre: a new egg";
         text(fb, (W - text_w(a)) / 2, 120, a, P->glow);
         text(fb, (W - text_w(c)) / 2, 156, c, C(.667f, .667f, .667f));
-    } else if (b->round) {
-        char line[32];
-        char *e = put(line, "Which way? ");
-        e = putn(e, b->round), e = put(e, " of "), putn(e, PLAY_ROUNDS);
-        text(fb, (W - text_w(line)) / 2, SAY_Y, line, P->glow);
-        char won[16];
-        e = put(won, "Won "), putn(e, b->wins);
-        text(fb, (W - text_w(won)) / 2, 244, won, C(.667f, .667f, .667f));
-    } else if (b->say_t > 0 && b->note_t <= 0) /* buddy.png's note has the line */
-        text(fb, (W - text_w(b->say)) / 2, SAY_Y, b->say, cmul(P->glow, sat(b->say_t * 3)));
+    } else
+        say_line(b, fb);
     if (b->stats) {
         char age[24], weight[24], disc[24], gen[24], *e;
         int d = g->age / (24 * 60);
@@ -1542,8 +1554,7 @@ static void render(const buddy *b, unsigned *fb) {
     if (b->on_pet) draw_pet_under(b, fb);
     if (!b->on_pet || !b->tm.gone) draw_buddy(b, fb), draw_parts(b, fb);
     if (b->on_pet) draw_pet(b, fb);
-    if (b->note_t > 0 && !b->round) /* what's wrong with buddy.png; the game's line wins */
-        text(fb, (W - text_w(b->note)) / 2, SAY_Y, b->note, cmul(pals[b->pal].glow, sat(b->note_t * 3)));
+    else say_line(b, fb);
     if (b->menu) draw_menu(b, fb);
 }
 
@@ -1748,6 +1759,13 @@ static int check(void) {
     assert(look(&b) == L_SICK);
     g->sick = 0;
     assert(look(&b) == L_SAD);
+    /* buddy.png's note has the line: what the pet says waits for it, and Tamagotchi off ends that */
+    b.note_t = 1, say(&b, "Yum!"), step(&b, 0.5f);
+    assert(b.say_t == 2);
+    step(&b, 0.6f), step(&b, 0.1f);
+    assert(b.note_t <= 0 && b.say_t < 2);
+    b.sel = 2, pet_toggle(&b);
+    assert(!b.on_pet && b.say_t == 0);
 
     /* buddy.png: the template, as ffmpeg compressed it (every row filter but Avg), decodes to the
      * looks it was made from. Run here, and ./template.sh after changing how the ghost looks */
@@ -1776,6 +1794,10 @@ static int check(void) {
     static const char key[] = "\0\0\0\6tRNS\0\x0a\0\x14\0\x1e" "\0\0\0\0";
     assert(!sheet_load(png_stored(sheet_file, 2, 8, key, sizeof key - 1, "\x0a\x14\x1e", 3)));
     assert(sheet[last] == 0 && sheet[last - 1] == 0xff000000u);
+    /* ImageMagick's black on clear: 1-bit grey, black cleared by tRNS */
+    static const char grey[] = "\0\0\0\2tRNS\0\0" "\0\0\0\0";
+    assert(!sheet_load(png_stored(sheet_file, 0, 1, grey, sizeof grey - 1, "\x01", 1)));
+    assert(sheet[last] == 0xffffffffu && sheet[last - 1] == 0);
     /* a bad file says why, and leaves the ghost */
     png_stored(sheet_file, 6, 8, "", 0, "", 0), sheet_file[19] ^= 1;
     assert(strstr(sheet_load(pn), "1344") && !sheet_ok);

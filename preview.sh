@@ -2,7 +2,7 @@
 # A scripted session rendered on the host (fidget.c -DHOST): preview.mp4 and preview.gif here.
 # preview.sh [colour 0-1] [pet] [sheet.png]: pet previews Tamagotchi mode, a sheet a buddy of your own
 set -e
-sheet=${3:+$(realpath "$3")}
+case $3 in /* | "") sheet=$3 ;; *) sheet=$PWD/$3 ;; esac # before the cd
 cd "$(dirname "$0")"
 out=$(mktemp -d)
 cc -O2 -fno-math-errno -DHOST fidget.c -o "$out/fidget"
