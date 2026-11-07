@@ -956,7 +956,7 @@ static void pet_step(buddy *b, float dt) {
     }
     if (asleep && !g->asleep) moods(b, SURPRISE, 0.45f, NORMAL, 0), say(b, "Good morning!");
     if (g->asleep && b->mood == NORMAL) moods(b, SLEEP, 0, NORMAL, 0);
-    if (g->gone) b->round = 0;
+    if (g->gone) b->round = 0, b->say_t = 0; /* nothing left to say, nor to show the next egg */
     if (b->say_t > 0 && b->note_t <= 0) b->say_t -= dt; /* it waits for buddy.png's note */
     if (b->gift_t > 0) b->gift_t -= dt;
     if (b->pet_t > 0) b->pet_t -= dt;
@@ -1484,7 +1484,7 @@ static void draw_pet_under(const buddy *b, unsigned *fb) { /* what lies on the g
         stamp(fb, I_POOP, i < 2 ? 48 + i * 36 : 327 - (i - 2) * 36, 244, C(.62f, .46f, .28f));
 }
 /* The line under the hearts, one thing at a time: what's wrong with buddy.png, its few seconds first,
- * then the game's round or what the pet says, but not once it's gone. The toy's only has the note. */
+ * then the game's round or what the pet says. The toy's line only ever has the note. */
 static void say_line(const buddy *b, unsigned *fb) {
     const palette *P = &pals[b->pal];
     if (b->note_t > 0)
@@ -1497,7 +1497,7 @@ static void say_line(const buddy *b, unsigned *fb) {
         char won[16];
         e = put(won, "Won "), putn(e, b->wins);
         text(fb, (W - text_w(won)) / 2, 244, won, C(.667f, .667f, .667f));
-    } else if (b->say_t > 0 && !b->tm.gone)
+    } else if (b->say_t > 0)
         text(fb, (W - text_w(b->say)) / 2, SAY_Y, b->say, cmul(P->glow, sat(b->say_t * 3)));
 }
 static void draw_pet(const buddy *b, unsigned *fb) {
@@ -1769,9 +1769,9 @@ static int check(void) {
     b.say_t = 0, b.round = 1, b.note = "buddy.png is damaged", render(&b, shot);
     b.note_t = 3, render(&b, canvas);
     assert(memcmp(shot + SAY_Y * W, canvas + SAY_Y * W, FONT_H * W * sizeof *canvas));
-    b.round = 0, b.note_t = 0, g->gone = 1, say(&b, "It grew!"), render(&b, shot);
-    for (int i = SAY_Y * W; i < (SAY_Y + FONT_H) * W; ++i) assert(shot[i] == backdrop[i]);
-    b.note_t = 3, render(&b, canvas);
+    b.round = 0, b.note_t = 0, g->gone = 1, say(&b, "It grew!"), step(&b, 0.01f);
+    assert(b.say_t == 0); /* gone, it's said, and nothing's left for Centre's next egg */
+    render(&b, shot), b.note_t = 3, render(&b, canvas);
     assert(memcmp(shot + SAY_Y * W, canvas + SAY_Y * W, FONT_H * W * sizeof *canvas));
     b.note = 0, b.note_t = 0, b.say_t = 0, g->gone = 0;
     pet_toggle(&b);
