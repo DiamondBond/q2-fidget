@@ -193,6 +193,7 @@ typedef struct {
     int gift;                 /* the stamp falling into its mouth */
     int round, wins, turn;    /* the game: this round (1..PLAY_ROUNDS, 0 none), won so far, its last turn */
     float play_wheel, shown;  /* the wheel towards a guess, seconds left showing the turn */
+    float rest_t;             /* seconds since the wheel last moved */
     part p[PARTS];
 } buddy;
 
@@ -665,6 +666,7 @@ static void recolour(buddy *b) {
 #define MENU_X ((W - MENU_W) / 2)
 #define MENU_Y ((H - MENU_H) / 2)
 #define MENU_STEP 28 /* the wheel's raw travel a row: as a menu tick at 50% sensitivity */
+#define WHEEL_REST 0.25f /* seconds: Q2 Pod sends no lift, so a pause this long is a new touch */
 static int menu_row(float X, float Y) { /* the row at a touch, else -1 */
     int r = (int)(Y - MENU_Y - 8) / MENU_ROW;
     return X >= MENU_X && X < MENU_X + MENU_W && Y >= MENU_Y + 8 && r >= 0 && r < MENU_ROWS ? r : -1;
@@ -912,9 +914,20 @@ static int num(const char **s) {
     while (**s >= '0' && **s <= '9') n = n * 10 + *(*s)++ - '0';
     return neg ? -n : n;
 }
+/* a new touch or a reversal starts a whole step away, as Q2 Pod's lists do */
+static void wheel_rest(buddy *b, int x) {
+    float *w[3] = { &b->menu_wheel, &b->icon_wheel, &b->play_wheel };
+    for (int i = 0; i < 3; ++i)
+        if (b->rest_t >= WHEEL_REST || (float)x * *w[i] < 0) *w[i] = 0;
+    b->rest_t = 0;
+}
 static void input(buddy *b, const char *s) {
     char kind = s[0], what = s[0] && s[1] == ' ' ? s[2] : 0;
     const char *r = kind == 'w' || !what || !s[3] ? s + 1 : s + 3; /* "w N": no second word */
+    if (kind == 'w') {
+        const char *q = r;
+        wheel_rest(b, num(&q));
+    }
     if (b->menu) {
         int x = num(&r), y = num(&r);
         b->idle = 0;
@@ -970,7 +983,7 @@ static void pet_step(buddy *b, float dt) {
 
 static void step(buddy *b, float dt) {
     b->menu_t += dt;
-    b->t += dt, b->idle += dt, b->down_t += dt, b->wheel_t += dt, b->pal_t += dt;
+    b->t += dt, b->idle += dt, b->down_t += dt, b->wheel_t += dt, b->pal_t += dt, b->rest_t += dt;
     if (b->on_pet) pet_step(b, dt);
     if (b->note_t > 0) b->note_t -= dt;
     if (b->mood_t > 0 && (b->mood_t -= dt) <= 0) moods(b, b->next, b->next_t, NORMAL, 0);
@@ -1680,6 +1693,14 @@ static int check(void) {
     assert(b.icon == ICONS - 1);
     input(&b, "w -28");
     assert(b.icon == 0);
+    /* part of a step stays through a turn and goes over a pause or a reversal */
+    input(&b, "w 20"), input(&b, "w 5");
+    assert(b.icon_wheel == 25);
+    b.rest_t = WHEEL_REST, input(&b, "w 5");
+    assert(b.icon_wheel == 5);
+    input(&b, "w -5");
+    assert(b.icon_wheel == -5 && b.icon == 0);
+    b.icon_wheel = 0;
     /* scolding only earns discipline when it's acting up */
     g->fuss = 5, g->fun = 2, b.icon = I_SCOLD, input(&b, "k u 218");
     assert(g->discipline == 25 && !g->fuss && g->fun == 2);
