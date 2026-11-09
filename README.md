@@ -3,6 +3,9 @@
 A ghost buddy to poke on the Shanling Q2, for [Q2 Pod](https://github.com/DiamondBond/q2-pod).
 Install it from **System settings → App Store** and it shows up in **Library → Games**.
 
+The [mini-guide](https://github.com/DiamondBond/q2-fidget/raw/main/docs/guide/Buddy-Mini-Guide.pdf) (PDF)
+shows how to use it, and how to paint your own buddy step by step.
+
 | To | Do this |
 | --- | --- |
 | Make it giggle | Tap its tummy |
@@ -105,7 +108,8 @@ mode; a third argument, a PNG, previews it as `buddy.png`. `./template.sh` rende
 `cc -DHOST fidget.c -o /tmp/buddy && /tmp/buddy check`, run here, tests the pet's rules and the PNG decoder,
 on `buddy-template.png`; build it with
 `-fsanitize=address,undefined` to see that a damaged file never reads or writes astray. `tools/font.py`
-regenerates `font.h` (needs Pillow).
+regenerates `font.h` (needs Pillow). `docs/guide/build.py` rebuilds the mini-guide's PDF (needs Chromium and
+`pdftotext`).
 
 The program, its folder and this repo keep the name `q2-fidget`: the App Store takes an app's folder from its
 repo's name, and a new one would leave existing installs behind.

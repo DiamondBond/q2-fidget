@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Buddy for Q2 Pod</title>
+<style>
+/* The look of the Q2 Pod User Guide (q2-pod, docs/manual/guide.html), cut to what a mini-guide uses. */
+@page {
+  size: 8.5in 11in;
+  margin: 0.95in 1.3in 1in 1.55in;
+  @bottom-right { content: counter(page); font: 400 8.5pt "Open Sans", sans-serif; color: #222; vertical-align: top; padding-top: 0.25in; }
+  @bottom-left  { font: 400 8.5pt "Open Sans", sans-serif; color: #2a7fcf; vertical-align: top; padding-top: 0.25in; white-space: pre; }
+}
+@page cover { margin: 0; @bottom-right { content: none; } }
+@page toc { margin-left: 1.1in; @bottom-left { content: "Contents"; padding-left: 0.45in; } }
+@page ch1 { @bottom-left { content: "Chapter 1   Getting Started"; } }
+@page ch2 { @bottom-left { content: "Chapter 2   Tamagotchi"; } }
+@page ch3 { @bottom-left { content: "Chapter 3   Your Own Buddy"; } }
+@page ch4 { @bottom-left { content: "Chapter 4   Updating and Help"; } }
+@page :first { @bottom-left { content: none; } }
+
+* { box-sizing: border-box; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body { margin: 0; font: 400 9.6pt/1.5 "Open Sans", "Noto Sans", sans-serif; color: #222; }
+p { margin: 0 0 0.75em; }
+b, strong { font-weight: 600; }
+code { font: 8.6pt "DejaVu Sans Mono", monospace; color: #333; }
+a { color: inherit; text-decoration: none; }
+a.link { color: #2a7fcf; }
+
+.cover { page: cover; height: 11in; position: relative; }
+.cover .logo { position: absolute; top: 1.6in; left: 50%; width: 1.5in; margin-left: -0.75in; border-radius: 0.16in; }
+.cover h1 { position: absolute; top: 4.05in; width: 100%; text-align: center; margin: 0; font: 600 34pt/1.15 "Open Sans", sans-serif; color: #1d1d1f; letter-spacing: -0.5pt; }
+.cover h1 span { display: block; color: #a8a8a8; }
+.cover .fine { position: absolute; bottom: 0.8in; width: 100%; text-align: center; font-size: 8pt; color: #999; }
+
+.toc { page: toc; break-before: page; }
+.toc h1 { font: 600 22pt "Open Sans", sans-serif; margin: 0 0 0.25in 0.45in; color: #1d1d1f; }
+.toc ol { list-style: none; margin: 0; padding: 0; }
+.toc li { display: flex; gap: 0.17in; line-height: 1.32; font-size: 9.2pt; }
+.toc li .n { width: 0.28in; text-align: right; font-weight: 600; flex: none; }
+.toc li.chap { margin-top: 0.09in; font-size: 11.5pt; color: #2a7fcf; break-after: avoid; }
+.toc li.chap .n { color: #222; font-size: 9.5pt; padding-top: 2.5pt; }
+.toc li.chap:first-child { margin-top: 0; }
+
+.chapter { break-before: page; }
+.opener { display: flex; justify-content: space-between; align-items: flex-start; margin: 0.1in 0 0.45in; }
+.opener h1 { font: 600 20pt/1.2 "Open Sans", sans-serif; color: #1d1d1f; margin: 0.12in 0 0; }
+.opener .num { font: 600 64pt/0.9 "Open Sans", sans-serif; color: #1d1d1f; margin-right: -0.05in; }
+.lead { font: 400 14pt/1.35 "Open Sans", sans-serif; color: #2a7fcf; margin: 0 0 0.18in; }
+h2 { font: 400 15pt/1.25 "Open Sans", sans-serif; color: #2a7fcf; margin: 0.32in 0 0.06in; break-after: avoid; }
+h2 + p { margin-top: 0; }
+
+ul { margin: 0 0 0.8em; padding-left: 0.16in; }
+ul li { margin: 0 0 0.25em; }
+ul li::marker { content: "•  "; color: #555; }
+ol.steps { margin: 0 0 0.8em; padding-left: 0.22in; }
+ol.steps li { margin: 0 0 0.3em; padding-left: 0.04in; }
+ol.steps li::marker { font-weight: 600; color: #2a7fcf; }
+
+table { width: 100%; border-collapse: collapse; margin: 0.08in 0 0.18in; font-size: 8.6pt; line-height: 1.4; }
+thead { display: table-header-group; }
+th { background: #8e959b; color: #fff; text-align: left; font-weight: 600; padding: 3pt 6pt; }
+td { padding: 4.5pt 6pt; border-bottom: 0.6pt solid #b9bec2; vertical-align: top; }
+td:first-child { font-weight: 600; width: 34%; }
+tr { break-inside: avoid; }
+
+.note { background: #f1f2f3; border-left: 3pt solid #8e959b; padding: 7pt 10pt; margin: 0.1in 0 0.18in; font-size: 9pt; break-inside: avoid; }
+.note.important { border-left-color: #2a7fcf; }
+.note p:last-child { margin: 0; }
+.note .label { font-weight: 600; }
+
+.shots { display: flex; justify-content: center; gap: 0.25in; margin: 0.1in 0 0.2in; break-inside: avoid; }
+.shots figure, figure.one { margin: 0; text-align: center; font-size: 7.6pt; color: #666; }
+.shots img { display: block; width: 2.45in; margin: 0 auto 4pt; border-radius: 0.11in; }
+figure.one { margin: 0.1in 0 0.2in; break-inside: avoid; }
+figure.one img { display: block; width: 2.6in; margin: 0 auto 4pt; border-radius: 0.12in; }
+figure.sheet img { width: 100%; border-radius: 0.04in; }
+.legal { margin-top: 0.4in; padding-top: 0.12in; border-top: 0.6pt solid #b9bec2; font-size: 7.6pt; color: #777; }
+.m { position: absolute; font-size: 1px; color: #fff; }
+
+p, li, td { orphans: 3; widows: 3; }
+p { break-inside: avoid; }
+ul, ol, pre, .note, .shots, figure { break-inside: avoid; }
+p:has(+ ul), p:has(+ ol), p:has(+ table), p:has(+ .shots), p:has(+ figure), h2 { break-after: avoid; }
+.sec { break-inside: avoid; }
+.toc ol { break-inside: auto; }
+</style>
+</head>
+<body>
+
+<section class="cover">
+  <img class="logo" src="shots/logo.png" alt="Buddy, the ghost">
+  <h1>Buddy<span>for Q2 Pod</span></h1>
+  <div class="fine">A mini-guide to the app · version 1.2.1</div>
+</section>
+
+<section class="toc">
+  <h1>Contents</h1>
+  <ol>
+    <li class="chap"><span class="n">{{p:c1}}</span><a href="#c1">Chapter 1: Getting Started</a></li>
+    <li><span class="n">{{p:about}}</span><a href="#about">Buddy</a></li>
+    <li><span class="n">{{p:install}}</span><a href="#install">Installing Buddy</a></li>
+    <li><span class="n">{{p:play}}</span><a href="#play">Playing with Buddy</a></li>
+    <li><span class="n">{{p:menu}}</span><a href="#menu">The menu</a></li>
+
+    <li class="chap"><span class="n">{{p:c2}}</span><a href="#c2">Chapter 2: Tamagotchi</a></li>
+    <li><span class="n">{{p:start}}</span><a href="#start">Hatching an egg</a></li>
+    <li><span class="n">{{p:care}}</span><a href="#care">Looking after it</a></li>
+    <li><span class="n">{{p:grow}}</span><a href="#grow">Growing up</a></li>
+
+    <li class="chap"><span class="n">{{p:c3}}</span><a href="#c3">Chapter 3: Your Own Buddy</a></li>
+    <li><span class="n">{{p:need}}</span><a href="#need">What you need</a></li>
+    <li><span class="n">{{p:paint}}</span><a href="#paint">Paint it</a></li>
+    <li><span class="n">{{p:looks}}</span><a href="#looks">The fourteen squares</a></li>
+    <li><span class="n">{{p:copy}}</span><a href="#copy">Put it on the Q2</a></li>
+    <li><span class="n">{{p:ghost}}</span><a href="#ghost">If you still see the ghost</a></li>
+    <li><span class="n">{{p:change}}</span><a href="#change">Changing it, or going back</a></li>
+
+    <li class="chap"><span class="n">{{p:c4}}</span><a href="#c4">Chapter 4: Updating and Help</a></li>
+    <li><span class="n">{{p:update}}</span><a href="#update">Updating and removing</a></li>
+    <li><span class="n">{{p:trouble}}</span><a href="#trouble">Troubleshooting</a></li>
+  </ol>
+</section>
+
+<section class="chapter" style="page: ch1">
+  <div class="opener"><h1 id="c1">Getting Started</h1><div class="num">1</div></div>
+  <p class="lead">Install Buddy and say hello.</p>
+
+  <div class="sec">
+  <h2 id="about">Buddy</h2>
+  <p><b>Library → Games → Buddy</b> is a ghost to poke, pet and fling around the screen. Turn on Tamagotchi and you raise it from an egg instead, or paint your own and Buddy shows that in place of the ghost (<a class="link" href="#c3">Chapter 3</a>). It isn’t in the firmware: it runs from the microSD card.</p>
+  </div>
+
+  <div class="sec">
+  <h2 id="install">Installing Buddy</h2>
+  <p>You need Q2 Pod 1.6.3 or later. The easy way is over Wi-Fi: open <b>System settings → App Store</b> and press Centre on <b>Buddy</b>.</p>
+  <p>Or by hand:</p>
+  <ol class="steps">
+    <li>Download <code>fidget.zip</code> from <a class="link" href="https://github.com/DiamondBond/q2-fidget/releases/latest">github.com/DiamondBond/q2-fidget/releases/latest</a>.</li>
+    <li>Plug the Q2 into your computer with the USB-C cable. The card shows up as a drive.</li>
+    <li>Unzip the file to the card’s root, so the card has a <code>.fidget</code> folder. On macOS and Linux the leading dot hides the folder; Cmd+Shift+. shows it in Finder.</li>
+    <li>Eject and unplug the Q2.</li>
+  </ol>
+  </div>
+
+  <div class="sec">
+  <h2 id="play">Playing with Buddy</h2>
+  <table>
+    <thead><tr><th>To</th><th>Do this</th></tr></thead>
+    <tr><td>Make it giggle</td><td>Tap its tummy</td></tr>
+    <tr><td>Boop it</td><td>Tap its face</td></tr>
+    <tr><td>Pet it</td><td>Hold a finger on it</td></tr>
+    <tr><td>Pick it up and fling it</td><td>Drag it, then let go</td></tr>
+    <tr><td>Annoy it</td><td>Tap it five times quickly</td></tr>
+    <tr><td>Make it dizzy</td><td>Spin the wheel fast</td></tr>
+    <tr><td>Make it say boo</td><td>Press Centre</td></tr>
+    <tr><td>Open the menu</td><td>Press Return</td></tr>
+    <tr><td>Close Buddy at once</td><td>Hold Return</td></tr>
+  </table>
+  <div class="shots">
+    <figure><img src="shots/pet.png" alt="The ghost being petted, with hearts rising">Petted</figure>
+    <figure><img src="shots/boo.png" alt="The ghost saying boo, with its mouth open">Boo</figure>
+  </div>
+  <p>Play/Pause and the side buttons keep controlling the music. Leave Buddy alone and it dozes off. After two minutes without a touch it closes, unless <b>Smart Awake</b> is on (<b>System settings → Display</b>), which keeps it open and the screen lit.</p>
+  </div>
+
+  <div class="sec">
+  <h2 id="menu">The menu</h2>
+  <p>Press <b>Return</b>. Turn the wheel and press Centre, or tap a row.</p>
+  <figure class="one"><img src="shots/menu.png" alt="The menu: Continue, Colour: Blue, Tamagotchi: Off, Quit">The menu</figure>
+  <ul>
+    <li><b>Continue:</b> back to your buddy.</li>
+    <li><b>Colour:</b> Blue or Pink.</li>
+    <li><b>Tamagotchi:</b> On or Off (<a class="link" href="#c2">Chapter 2</a>).</li>
+    <li><b>Quit:</b> closes Buddy.</li>
+  </ul>
+  </div>
+</section>
+
+<section class="chapter" style="page: ch2">
+  <div class="opener"><h1 id="c2">Tamagotchi</h1><div class="num">2</div></div>
+  <p class="lead">Raise your buddy from an egg.</p>
+
+  <div class="sec">
+  <h2 id="start">Hatching an egg</h2>
+  <p>Open the menu and set <b>Tamagotchi: On</b>. You start with an egg. Your buddy lives in real time, whether Buddy is open or closed. Turn Tamagotchi off to stop its clock; the toy from Chapter 1 is back until you turn it on again.</p>
+  </div>
+
+  <div class="sec">
+  <h2 id="care">Looking after it</h2>
+  <p>The wheel moves along the icons, and Centre or a tap uses one. An icon that pulses pink, with a <b>!</b> over your buddy, is something it needs. You can still pet it and poke it for fun; a pet is worth a heart of Fun, once every ten minutes. Centre doesn’t say boo here.</p>
+  <div class="shots">
+    <figure><img src="shots/fed.png" alt="A baby ghost, Food and Fun hearts above it, saying Yum!">Fed</figure>
+    <figure><img src="shots/sick.png" alt="A green ghost saying One more dose, a pink exclamation mark over it and two messes beside it">Sick, with a mess to clean</figure>
+  </div>
+  <table>
+    <thead><tr><th>Icon</th><th>Does this</th></tr></thead>
+    <tr><td>Bowl</td><td>Meal: a heart of Food, and a little weight. It refuses when full</td></tr>
+    <tr><td>Sweet</td><td>Snack: a heart of Fun, and more weight. Too heavy and it can get sick</td></tr>
+    <tr><td>Ball</td><td>The game: guess which way it turns, with the wheel or a tap on that side. Win three of five for a heart of Fun; either way it loses a little weight</td></tr>
+    <tr><td>Bulb</td><td>Lights: when it’s tired, put it to bed. It sleeps faster in the dark, and if you wake it early it sulks</td></tr>
+    <tr><td>Cross</td><td>Medicine: two doses when it looks green</td></tr>
+    <tr><td>Broom</td><td>Clean up. Left lying around, the mess can make it sick</td></tr>
+    <tr><td>!</td><td>Scold: when it pulls a face and refuses food or the game for no reason. That builds discipline; scolding it otherwise only hurts its feelings</td></tr>
+    <tr><td>Bars</td><td>Its age, weight, discipline and which egg this is</td></tr>
+  </table>
+  </div>
+
+  <div class="sec">
+  <h2 id="grow">Growing up</h2>
+  <p>Hatched, it grows from Baby to Child after an hour, to Teen after a day and to Adult after three.</p>
+  <p>A need left unanswered for an hour is one care mistake. An Adult raised with at most one mistake and 50% discipline wears a halo; one with five or more grows horns. Starving or sick for about three days awake, it floats away, and Centre brings the next egg.</p>
+  </div>
+</section>
+
+<section class="chapter" style="page: ch3">
+  <div class="opener"><h1 id="c3">Your Own Buddy</h1><div class="num">3</div></div>
+  <p class="lead">Paint your own, and Buddy shows it instead of the ghost.</p>
+
+  <div class="sec">
+  <h2 id="need">What you need</h2>
+  <ul>
+    <li>Buddy installed on the Q2, so the card has its <code>.fidget</code> folder.</li>
+    <li>A computer and the Q2’s USB-C cable.</li>
+    <li>An image editor that keeps see-through areas. <a class="link" href="https://www.gimp.org">GIMP</a> is free for Windows, macOS and Linux, and <a class="link" href="https://www.photopea.com">Photopea</a> is free in a web browser. The steps here use GIMP.</li>
+  </ul>
+  </div>
+
+  <div class="sec">
+  <h2 id="paint">Paint it</h2>
+  <p>Your buddy is one picture holding all its looks, in two rows of seven squares.</p>
+  <ol class="steps">
+    <li>Download the template, <a class="link" href="https://github.com/DiamondBond/q2-fidget/raw/main/buddy-template.png">buddy-template.png</a> (github.com/DiamondBond/q2-fidget/raw/main/buddy-template.png). It’s the ghost itself, in every look.</li>
+    <li>Open it in your editor. <b>Don’t resize or crop it:</b> it has to stay 1344 x 384 pixels.</li>
+    <li>Turn on a grid so you can see the squares. In GIMP: <b>Image → Configure Grid</b>, set the spacing to 192 by 192, then <b>View → Show Grid</b>.</li>
+    <li>Paint over the squares you want to change. Any square you leave alone stays the ghost, so you can start with just a few. <a class="link" href="#looks">The fourteen squares</a> shows which is which.</li>
+    <li>Where you want nothing, erase to see-through, not to white. To empty a whole square in GIMP, select it with the Rectangle Select tool and press Delete. See-through areas show the screen behind, and soft edges blend.</li>
+    <li>Keep each look inside its square, and about the ghost’s size. A point 96 pixels across and 112 down from the square’s top-left corner is your buddy’s middle, where it floats, turns and squashes.</li>
+    <li>In GIMP choose <b>File → Export As</b>, name it <code>buddy.png</code> and press Export. Leave <b>Interlacing</b> off and the other options as they are. <b>Save</b> on its own makes a <code>.xcf</code> file, which Buddy can’t read.</li>
+  </ol>
+  <div class="note"><p><span class="label">Only have one picture?</span> Empty squares 1 to 11, paste it into each one, centred, and export. Its face won’t change with its mood, but it will still hop, squash and fly.</p></div>
+  </div>
+
+  <div class="sec">
+  <h2 id="looks">The fourteen squares</h2>
+  <figure class="one sheet"><img src="../../buddy-guide.png" alt="The template's fourteen squares, numbered and named: 1 Normal to 14 Horns">The template, with its squares numbered</figure>
+  <table>
+    <thead><tr><th>Square</th><th>Shows when</th></tr></thead>
+    <tr><td>1 Normal</td><td>Most of the time</td></tr>
+    <tr><td>2 Blink</td><td>For a moment, every few seconds</td></tr>
+    <tr><td>3 Happy</td><td>Giggling, booped, let go after a fling, fed</td></tr>
+    <tr><td>4 Petted</td><td>While you pet it</td></tr>
+    <tr><td>5 Surprised</td><td>Picked up, just booped, woken</td></tr>
+    <tr><td>6 Annoyed</td><td>Annoyed, refusing or scolded, and acting up in Tamagotchi</td></tr>
+    <tr><td>7 Boo</td><td>Saying boo</td></tr>
+    <tr><td>8 Dizzy</td><td>Dizzy</td></tr>
+    <tr><td>9 Asleep</td><td>Dozing, or in bed</td></tr>
+    <tr><td>10 Sad</td><td>Hungry or bored, in Tamagotchi</td></tr>
+    <tr><td>11 Sick</td><td>Sick, in Tamagotchi; Buddy tints it green</td></tr>
+    <tr><td>12 Egg</td><td>Before it hatches</td></tr>
+    <tr><td>13 Halo</td><td>Over an Adult raised with care, on its face’s square</td></tr>
+    <tr><td>14 Horns</td><td>Over an Adult raised with five or more mistakes</td></tr>
+  </table>
+  <p>Baby to Adult use the same squares, drawn smaller.</p>
+  </div>
+
+  <div class="sec">
+  <h2 id="copy">Put it on the Q2</h2>
+  <ol class="steps">
+    <li>On the Q2, close Buddy: hold <b>Return</b>. It reads your picture as it opens, and a game should be closed before you plug in USB.</li>
+    <li>Plug the Q2 into your computer with the USB-C cable. The card shows up as a drive.</li>
+    <li>Open the <code>.fidget</code> folder at the top of the card. Its leading dot hides it on a Mac (press Cmd+Shift+. in Finder) and on Linux (press Ctrl+H in the file manager).</li>
+    <li>Copy <code>buddy.png</code> into <code>.fidget</code>, beside the file called <code>q2-fidget</code>.</li>
+    <li>Eject the card on your computer, then unplug the Q2.</li>
+    <li>Open <b>Library → Games → Buddy</b>.</li>
+  </ol>
+  <figure class="one"><img src="shots/own.png" alt="An orange cat in place of the ghost, being petted, with hearts rising">Your own buddy, being petted</figure>
+  <p>It hops, squashes, tilts and flies as the ghost does, but has no waving arms, rippling hem or eyes that follow your finger, and no glow unless you paint one. A tap above its middle boops it; lower down, it giggles. <b>Colour</b> recolours the sparkles and menus, not your painting.</p>
+  </div>
+
+  <div class="sec">
+  <h2 id="ghost">If you still see the ghost</h2>
+  <p>A file Buddy can’t use leaves the ghost, with a line across the top for a few seconds saying why:</p>
+  <figure class="one"><img src="shots/note.png" alt="The ghost, with the line buddy.png isn't 1344 x 384 above it">What a problem looks like</figure>
+  <table>
+    <thead><tr><th>The line says</th><th>What to do</th></tr></thead>
+    <tr><td>buddy.png isn’t 1344 x 384</td><td>The picture was resized or cropped. Paint on a fresh copy of the template</td></tr>
+    <tr><td>buddy.png is interlaced</td><td>Export it again with Interlacing off</td></tr>
+    <tr><td>Save buddy.png as 8-bit</td><td>It’s 16-bit. In GIMP choose <b>Image → Precision</b>, pick 8 bit integer, and export it again</td></tr>
+    <tr><td>buddy.png isn’t a PNG</td><td>Renaming a file doesn’t convert it. Export it from your editor as a PNG</td></tr>
+    <tr><td>buddy.png is too big</td><td>It’s 3 MB or more. Check its size is 1344 x 384, and export it again without extra data such as a thumbnail or colour profile</td></tr>
+    <tr><td>buddy.png is damaged</td><td>Copy it to the card again, and eject before you unplug</td></tr>
+  </table>
+  <p><b>The ghost with no line at all</b> means Buddy didn’t find the file:</p>
+  <ul>
+    <li>It must be named exactly <code>buddy.png</code>. Windows can hide the ending, so it may really be <code>buddy.png.png</code>: turn on File name extensions in File Explorer’s View menu.</li>
+    <li>It must be inside <code>.fidget</code>, not at the top of the card or in another folder.</li>
+    <li>Buddy reads it only as it opens, so close Buddy and open it again.</li>
+  </ul>
+  </div>
+
+  <div class="sec">
+  <h2 id="change">Changing it, or going back</h2>
+  <p>To change your buddy, copy a new <code>buddy.png</code> over the old one. To go back to the ghost, delete it. Then open Buddy again.</p>
+  <p>Updates keep your picture, but removing Buddy in the App Store deletes it with the folder, so keep a copy on your computer.</p>
+  </div>
+</section>
+
+<section class="chapter" style="page: ch4">
+  <div class="opener"><h1 id="c4">Updating and Help</h1><div class="num">4</div></div>
+  <p class="lead">Keep Buddy up to date, and find out what went wrong.</p>
+
+  <div class="sec">
+  <h2 id="update">Updating and removing</h2>
+  <p>To update, press Centre on Buddy’s <b>Update</b> row in <b>System settings → App Store</b>, or unzip a newer release over it. Your pet, its colour and your <code>buddy.png</code> stay.</p>
+  <p>To remove it, press Buddy’s <b>Installed</b> row in the App Store twice, or delete the <code>.fidget</code> folder. Either way your pet and <code>buddy.png</code> go with it.</p>
+  </div>
+
+  <div class="sec">
+  <h2 id="trouble">Troubleshooting</h2>
+  <ul>
+    <li><b>Buddy isn’t in Library → Games:</b> it isn’t installed, or it’s in the wrong place. The card needs a <code>.fidget</code> folder at its top level, with <code>q2-fidget</code> and <code>q2app</code> inside.</li>
+    <li><b>It closes by itself:</b> two minutes without a touch closes it. <b>Smart Awake</b> keeps it open.</li>
+    <li><b>Your pet is gone:</b> starving or sick for about three days awake, it floats away. Centre brings the next egg.</li>
+    <li><b>Your picture doesn’t show:</b> see <a class="link" href="#ghost">If you still see the ghost</a>.</li>
+  </ul>
+  <div class="note important"><p><span class="label">Getting help:</span> report a problem at <a class="link" href="https://github.com/DiamondBond/q2-fidget/issues">github.com/DiamondBond/q2-fidget/issues</a>, with what you did and what happened. If it’s about your own buddy, attach your <code>buddy.png</code>.</p></div>
+  </div>
+
+  <div class="legal">Buddy for Q2 Pod is an independent project and is not affiliated with, endorsed by or sponsored by Shanling. Shanling and Q2 are trademarks of Shanling. Screens in this guide are the app’s own, rendered on a computer. This guide follows the design of the Q2 Pod User Guide. The app and this guide are released under the MIT License.</div>
+</section>
+
+</body>
+</html>
