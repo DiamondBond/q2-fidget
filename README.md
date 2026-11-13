@@ -18,6 +18,9 @@ shows how to use it, and how to paint your own buddy step by step.
 | Change its colour, turn on Tamagotchi, or quit | Press Return for the menu |
 | Make it your own | Paint a `buddy.png` (see [Your own buddy](#your-own-buddy)) |
 
+The menu looks like the pop-ups of Q2 Pod's own games in your theme, Minimal, Modern or Classic, Light Mode
+too (Q2 Pod 1.8.1 or later; earlier, Buddy's own dark box in its colour).
+
 Play/Pause and the side buttons keep controlling the music. Leave it alone and it dozes off; after two
 minutes without a touch it closes, unless Smart Awake is on (System settings → Display →
 Controls), which keeps it open and the screen lit. Hold Return to close it at once.
@@ -79,7 +82,7 @@ see-through and soft edges blend. Baby to Adult are the same cells, smaller.
 
 It hops, squashes, tilts and flies as the ghost does, but has no waving arms, rippling hem or eyes that follow
 your finger, and no glow unless you paint one. A tap above its middle boops it; lower down, it giggles. Colour
-recolours the sparkles and menus, not your painting. A file Buddy can't use leaves the ghost, with a line at the
+recolours the sparkles (and the menu, before Q2 Pod 1.8.1), not your painting. A file Buddy can't use leaves the ghost, with a line at the
 top saying why.
 
 ## How it runs

@@ -657,19 +657,61 @@ static void recolour(buddy *b) {
     moods(b, HAPPY, 1.0f, NORMAL, 0);
 }
 
-/* Return's menu, drawn as Q2 Pod's games draw theirs: a dark box framed in the tone, the row
- * picked in the tone and the others grey */
+/* Q2 Pod's pop-up, from the Q2_POPUP it starts a game with (q2-pod's docs/librespot.md):
+ * "<style> <box> <frame> <title> <text> <pick> <pick_text>", RRGGBB as the screen shows them, and
+ * Classic's title strip and chosen row, POP_ROW rows each. None (older firmware, the preview): Buddy's
+ * own box. */
+#define POP_ROW 32
+enum { POP_OWN, POP_MINIMAL, POP_MODERN, POP_CLASSIC };
+static struct {
+    int style;
+    col box, frame, title, text, pick, pick_text, head[POP_ROW], band[POP_ROW];
+} pop;
+static int word_is(const char *s, const char *w) { /* s starts with the word w */
+    while (*w && *s == *w) ++s, ++w;
+    return !*w && (*s == ' ' || !*s);
+}
+static const char *hex_col(const char *s, col *c) { /* " RRGGBB" into c: past it, else 0 */
+    unsigned v = 0;
+    if (*s++ != ' ') return 0;
+    for (int i = 0; i < 6; ++i, ++s) {
+        int d = *s >= '0' && *s <= '9' ? *s - '0' : *s >= 'a' && *s <= 'f' ? *s - 'a' + 10 : -1;
+        if (d < 0) return 0;
+        v = v << 4 | (unsigned)d;
+    }
+    *c = unpack(v);
+    return s;
+}
+static void pop_read(const char *s) { /* anything but a whole value: Buddy's own */
+    pop.style = POP_OWN;
+    if (!s) return;
+    int style = word_is(s, "minimal") ? POP_MINIMAL : word_is(s, "modern") ? POP_MODERN : word_is(s, "classic") ? POP_CLASSIC : 0;
+    if (!style) return;
+    while (*s && *s != ' ') ++s;
+    col *c[6] = { &pop.box, &pop.frame, &pop.title, &pop.text, &pop.pick, &pop.pick_text };
+    for (int i = 0; i < 6; ++i)
+        if (!(s = hex_col(s, c[i]))) return;
+    for (int i = 0; style == POP_CLASSIC && i < 2 * POP_ROW; ++i)
+        if (!(s = hex_col(s, i < POP_ROW ? &pop.head[i] : &pop.band[i - POP_ROW]))) return;
+    if (!*s) pop.style = style;
+}
+
+/* Return's menu: Q2 Pod's pop-up when it says which (a title, then rows of POP_ROW), else a dark
+ * box framed in the tone, the row picked in the tone and the others grey */
 #define MENU_ROWS 4
 #define MENU_W 281
-#define MENU_ROW 36
-#define MENU_H (MENU_ROWS * MENU_ROW + 16)
 #define MENU_X ((W - MENU_W) / 2)
-#define MENU_Y ((H - MENU_H) / 2)
 #define MENU_STEP 28 /* the wheel's raw travel a row: as a menu tick at 50% sensitivity */
 #define WHEEL_REST 0.25f /* seconds: Q2 Pod sends no lift, so a pause this long is a new touch */
+/* the first row's place in the box, a row's height and the box's for n rows, as Q2 Pod's popup() */
+static int menu_top(void) { return pop.style == POP_CLASSIC ? POP_ROW + 1 : pop.style ? POP_ROW + 6 : 8; }
+static int menu_row_h(void) { return pop.style ? POP_ROW : 36; }
+static int menu_h(int n) { return menu_top() + n * menu_row_h() + (pop.style == POP_CLASSIC ? 0 : 8); }
+static int menu_y(void) { return (H - menu_h(MENU_ROWS)) / 2; }
 static int menu_row(float X, float Y) { /* the row at a touch, else -1 */
-    int r = (int)(Y - MENU_Y - 8) / MENU_ROW;
-    return X >= MENU_X && X < MENU_X + MENU_W && Y >= MENU_Y + 8 && r >= 0 && r < MENU_ROWS ? r : -1;
+    float y = Y - (float)(menu_y() + menu_top());
+    int r = y < 0 ? -1 : (int)y / menu_row_h();
+    return X >= MENU_X && X < MENU_X + MENU_W && r >= 0 && r < MENU_ROWS ? r : -1;
 }
 /* Tamagotchi on: its pet as it was left, whose clock stopped when it was turned off */
 static void pet_toggle(buddy *b) {
@@ -705,7 +747,7 @@ static void menu_input(buddy *b, char kind, char what, int x, int y) {
     } else if (kind == 't' && what == 'u') {
         int r = menu_row((float)x, (float)y);
         if (b->menu_down && r == b->menu_down - 1) menu_pick(b);
-        else if (!b->menu_down && (x < MENU_X || x >= MENU_X + MENU_W || y < MENU_Y || y >= MENU_Y + MENU_H))
+        else if (!b->menu_down && (x < MENU_X || x >= MENU_X + MENU_W || y < menu_y() || y >= menu_y() + menu_h(MENU_ROWS)))
             b->menu = 0; /* a tap off the box: back to it */
         b->menu_down = 0;
     }
@@ -1403,8 +1445,70 @@ static char *putn(char *e, int n) {
 }
 static void rows_in_box(unsigned *fb, const char *const *rows, int n, int y, int sel, const palette *P, float in) {
     for (int i = 0; i < n; ++i)
-        text(fb, (W - text_w(rows[i])) / 2, y + i * MENU_ROW + (MENU_ROW - FONT_H) / 2, rows[i],
+        text(fb, (W - text_w(rows[i])) / 2, y + i * menu_row_h() + (menu_row_h() - FONT_H) / 2, rows[i],
              cmul(i == sel ? P->glow : C(.667f, .667f, .667f), in));
+}
+
+/* a box rounded r, anti-aliased, its row i rows[i], or rows[n - 1] past them, at in */
+static void rrect(unsigned *fb, int x, int y, int w, int h, float r, const col *rows, int n, float in) {
+    float hw = (float)w * 0.5f, hh = (float)h * 0.5f, cx = (float)x + hw, cy = (float)y + hh;
+    for (int Y = y; Y < y + h; ++Y)
+        for (int X = x; X < x + w; ++X) {
+            float qx = absf((float)X + 0.5f - cx) - hw + r, qy = absf((float)Y + 0.5f - cy) - hh + r;
+            float d = len(maxf(qx, 0), maxf(qy, 0)) + minf(maxf(qx, qy), 0) - r;
+            blend(&fb[Y * W + X], rows[Y - y < n ? Y - y : n - 1], in * sat(0.5f - d));
+        }
+}
+#define CAPS_TRACK 2 /* Minimal's capitals, this far apart: Q2 Pod's SUDO_TRACK */
+static int pop_w(const char *s) { /* as pop_text draws it */
+    if (pop.style != POP_MINIMAL) return text_w(s);
+    int w = 0;
+    for (; *s; ++s) {
+        char k[2] = { *s >= 'a' && *s <= 'z' ? (char)(*s - 32) : *s, 0 };
+        w += text_w(k) + CAPS_TRACK;
+    }
+    return w ? w - CAPS_TRACK : 0;
+}
+static void pop_text(unsigned *fb, int x, int y, const char *s, col c) {
+    if (pop.style != POP_MINIMAL) {
+        text(fb, x, y, s, c);
+        return;
+    }
+    for (; *s; ++s) {
+        char k[2] = { *s >= 'a' && *s <= 'z' ? (char)(*s - 32) : *s, 0 };
+        text(fb, x, y, k, c);
+        x += text_w(k) + CAPS_TRACK;
+    }
+}
+/* a row's x in the box: Classic's from the left, Modern's centred, and Minimal's beside its dot, both
+ * left of Q2 Pod's (76 and 92), as Buddy's rows in capitals run to 222 px */
+#define DOT_X 24
+static int row_x(const char *s) {
+    return pop.style == POP_CLASSIC ? 16 : pop.style == POP_MINIMAL ? DOT_X + 16 : (MENU_W - pop_w(s)) / 2;
+}
+/* Q2 Pod's pop-up at y (popup() in its games.c): the title, then n rows, sel the chosen one (-1 none) on
+ * Classic's band, Modern's accent bar or beside Minimal's dot, faded in */
+static void pop_box(unsigned *fb, const char *title, const char *const *rows, int n, int y, int sel, float in) {
+    int x = MENU_X, w = MENU_W, h = menu_h(n), top = y + menu_top(), classic = pop.style == POP_CLASSIC;
+    col fill[H];
+    if (classic) { /* its line round it, then the strip, its line and the paper, the band over that */
+        rrect(fb, x - 1, y - 1, w + 2, h + 2, 13, &pop.frame, 1, in);
+        for (int i = 0; i < h; ++i) fill[i] = i < POP_ROW ? pop.head[i] : i == POP_ROW ? pop.frame : pop.box;
+        for (int i = 0; sel >= 0 && i < POP_ROW; ++i) fill[top - y + sel * POP_ROW + i] = pop.band[i];
+        rrect(fb, x, y, w, h, 12, fill, h, in);
+    } else { /* the box in its frame: Modern's rounder */
+        float r = pop.style == POP_MODERN ? 12 : 6;
+        rrect(fb, x, y, w, h, r, &pop.frame, 1, in);
+        rrect(fb, x + 2, y + 2, w - 4, h - 4, r - 2, &pop.box, 1, in);
+    }
+    col under = classic ? pop.head[POP_ROW / 2] : pop.box; /* the text fades in from it */
+    pop_text(fb, (W - pop_w(title)) / 2, y + (classic ? 0 : 4) + (POP_ROW - FONT_H) / 2, title, cmix(under, pop.title, in));
+    for (int i = 0; i < n; ++i) {
+        int ry = top + i * POP_ROW, on = i == sel;
+        if (on && pop.style == POP_MODERN) rrect(fb, x + 10, ry + 1, w - 20, POP_ROW - 2, 6, &pop.pick, 1, in);
+        if (on && pop.style == POP_MINIMAL) rrect(fb, x + DOT_X, ry + (POP_ROW - 6) / 2, 6, 6, 3, &pop.pick, 1, in);
+        pop_text(fb, x + row_x(rows[i]), ry + (POP_ROW - FONT_H) / 2, rows[i], cmix(pop.box, on ? pop.pick_text : pop.text, in));
+    }
 }
 
 /* the scene dimmed under a box, which fades in */
@@ -1412,12 +1516,16 @@ static void draw_menu(const buddy *b, unsigned *fb) {
     const palette *P = &pals[b->pal];
     float in = sat(b->menu_t / 0.12f);
     dim(fb, 0.55f * in);
-    draw_box(fb, P, MENU_X, MENU_Y, MENU_W, MENU_H, in);
     char colour[24], pet[24];
     put(put(colour, "Colour: "), pal_names[b->pal]);
     put(put(pet, "Tamagotchi: "), b->on_pet ? "On" : "Off");
     const char *rows[MENU_ROWS] = { "Continue", colour, pet, "Quit" };
-    rows_in_box(fb, rows, MENU_ROWS, MENU_Y + 8, b->sel, P, in);
+    if (pop.style) {
+        pop_box(fb, "Buddy", rows, MENU_ROWS, menu_y(), b->sel, in);
+        return;
+    }
+    draw_box(fb, P, MENU_X, menu_y(), MENU_W, menu_h(MENU_ROWS), in);
+    rows_in_box(fb, rows, MENU_ROWS, menu_y() + menu_top(), b->sel, P, in);
 }
 
 /* ---- the pet's screen ---- */
@@ -1554,10 +1662,14 @@ static void draw_pet(const buddy *b, unsigned *fb) {
         e = putn(put(disc, "Discipline: "), g->discipline), put(e, "%");
         putn(put(gen, "Egg number "), g->generation);
         const char *rows[] = { stage_names[g->stage], age, weight, disc, gen };
-        int n = 5, h = n * MENU_ROW + 16, y = (H - h) / 2;
         dim(fb, 0.55f);
-        draw_box(fb, P, MENU_X, y, MENU_W, h, 1);
-        rows_in_box(fb, rows, n, y + 8, 0, P, 1);
+        if (pop.style) /* the stage its title */
+            pop_box(fb, rows[0], rows + 1, 4, (H - menu_h(4)) / 2, -1, 1);
+        else {
+            int h = menu_h(5), y = (H - h) / 2;
+            draw_box(fb, P, MENU_X, y, MENU_W, h, 1);
+            rows_in_box(fb, rows, 5, y + menu_top(), 0, P, 1);
+        }
     }
 }
 
@@ -1654,6 +1766,52 @@ static long png_stored(unsigned char *f, int ct, int depth, const char *pre, int
 static int check(void) {
     static buddy b;
     tama *g = &b.tm;
+    {
+        /* Q2_POPUP: a whole value or Buddy's own box */
+        char hexes[6 * 7 + 2 * POP_ROW * 7 + 1], *e = hexes;
+        for (int i = 0; i < 6 + 2 * POP_ROW; ++i) e = put(e, i == 4 ? " 3366cc" : i == POP_ROW + 6 + 16 ? " 0a64dc" : " 808080");
+        static char v[16 + sizeof hexes];
+        put(put(v, "classic"), hexes);
+        pop_read(v);
+        assert(pop.style == POP_CLASSIC && pack(pop.pick) == 0xff3366cc && pack(pop.band[16]) == 0xff0a64dc);
+        hexes[6 * 7] = 0; /* the six alone */
+        put(put(v, "modern"), hexes), pop_read(v);
+        assert(pop.style == POP_MODERN && pack(pop.box) == 0xff808080);
+        put(put(v, "minimal"), hexes), pop_read(v);
+        assert(pop.style == POP_MINIMAL);
+        const char *junk[] = { 0, "", "minimal", "minimalist 000000 000000 000000 000000 000000 000000",
+                              "modern 000000 000000 000000 000000 000000", "modern 000000 000000 000000 000000 000000 00000g",
+                              "modern 000000 000000 000000 000000 000000 000000 ", "modern 000000 000000 000000 000000 000000 0000000",
+                              "classic 000000 000000 000000 000000 000000 000000", "sepia 000000 000000 000000 000000 000000 000000" };
+        for (unsigned i = 0; i < sizeof junk / sizeof *junk; ++i) pop.style = POP_MODERN, pop_read(junk[i]), assert(pop.style == POP_OWN);
+        /* each style's rows are where a touch finds them, and its pop-ups paint as Q2 Pod's: a pixel of
+         * the chosen row's band, bar or dot, of the box, and of Classic's strip */
+        static unsigned fb[W * H];
+        const char *rows[MENU_ROWS] = { "Continue", "Colour: Blue", "Tamagotchi: Off", "Quit" };
+        for (int style = POP_OWN; style <= POP_CLASSIC; ++style) {
+            pop.style = style;
+            for (int c = 0; c < POP_ROW; ++c) pop.head[c] = C(0, 0, (float)c / 64), pop.band[c] = C(0, (float)c / 64, 1);
+            pop.box = C(1, 1, 1), pop.frame = C(.5f, .5f, .5f), pop.pick = C(1, 0, 0);
+            int y = menu_y(), top = y + menu_top(), rh = menu_row_h();
+            assert(menu_h(5) < H && y >= 0 && menu_row(W / 2, (float)(top - 1)) == -1 && menu_row(W / 2, (float)(top + 4 * rh)) == -1);
+            for (int r = 0; r < MENU_ROWS; ++r) assert(menu_row(W / 2, (float)(top + r * rh + rh / 2)) == r);
+            if (!style) continue;
+            for (int k = 0; k < W * H; ++k) fb[k] = 0xff000000u;
+            pop_box(fb, "Buddy", rows, MENU_ROWS, y, 1, 1);
+            int ry = top + POP_ROW, x = MENU_X;
+            unsigned want = style == POP_CLASSIC ? pack(pop.band[16]) : style == POP_MODERN ? pack(pop.pick) : pack(pop.box);
+            assert(fb[(ry + 16) * W + x + MENU_W - 20] == want); /* right of the row's text */
+            assert(fb[(ry + POP_ROW + 16) * W + x + MENU_W - 20] == pack(pop.box)); /* the next row: unchosen */
+            if (style == POP_MINIMAL) assert(fb[(ry + 16) * W + x + DOT_X + 3] == pack(pop.pick)); /* the dot */
+            const char *wide[] = { "Tamagotchi: Off", "Age: under a day", "Age: 9999 days", "Discipline: 100%",
+                                   "Egg number 99999", "Weight: 999", "Colour: Blue" };
+            for (unsigned k = 0; k < sizeof wide / sizeof *wide; ++k) /* inside the frame, and clear of the dot */
+                assert(row_x(wide[k]) > (style == POP_MINIMAL ? DOT_X + 6 : 4) && row_x(wide[k]) + pop_w(wide[k]) <= MENU_W - 6);
+            if (style == POP_CLASSIC) assert(fb[(y + 3) * W + x + MENU_W - 20] == pack(pop.head[3]));
+            assert(fb[(y - 3) * W + x + MENU_W / 2] == 0xff000000u); /* nothing above it */
+        }
+        pop.style = POP_OWN;
+    }
     /* the top row and the bar's selection box clear the corners, at their outer rows */
     assert(glass(TOP_Y) + GLASS_SLACK <= TOP_X);
     assert(glass(BAR_Y + BAR_SLOT - 2) + GLASS_SLACK <= BAR_X + 2);
@@ -1860,6 +2018,7 @@ static int check(void) {
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : "/tmp/fidget";
     if (dir[0] == 'c') return check();
+    pop_read(getenv("Q2_POPUP")); /* preview.sh: a theme's pop-up */
     if (!strcmp(dir, "template") && argc > 2) { /* template out.pam */
         static unsigned char rgba[SHEET_W * SHEET_H * 4];
         template(rgba);
@@ -2069,6 +2228,11 @@ int main(int argc, char **argv) {
     if (sock >= 0) sc(SYS_bind, sock, (long)&addr, sizeof addr, 0, 0, 0);
 
     rng ^= (unsigned)now_ms();
+    for (char **e = argv + argc + 1; *e; ++e) { /* the environment, after argv's NULL */
+        const char *v = *e, *k = "Q2_POPUP=";
+        while (*k && *v == *k) ++v, ++k;
+        if (!*k) pop_read(v);
+    }
     paths(argc > 0 ? argv[0] : "");
     init(&bud, 0);
     bud.now = now_s();
