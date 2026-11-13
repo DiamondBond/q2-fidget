@@ -682,7 +682,7 @@ static const char *hex_col(const char *s, col *c) { /* " RRGGBB" into c: past it
     *c = unpack(v);
     return s;
 }
-static void pop_read(const char *s) { /* anything but a whole value: Buddy's own */
+static void pop_read(const char *s) { /* anything short of a whole value: Buddy's own */
     pop.style = POP_OWN;
     if (!s) return;
     int style = word_is(s, "minimal") ? POP_MINIMAL : word_is(s, "modern") ? POP_MODERN : word_is(s, "classic") ? POP_CLASSIC : 0;
@@ -693,7 +693,7 @@ static void pop_read(const char *s) { /* anything but a whole value: Buddy's own
         if (!(s = hex_col(s, c[i]))) return;
     for (int i = 0; style == POP_CLASSIC && i < 2 * POP_ROW; ++i)
         if (!(s = hex_col(s, i < POP_ROW ? &pop.head[i] : &pop.band[i - POP_ROW]))) return;
-    if (!*s) pop.style = style;
+    if (!*s || *s == ' ') pop.style = style; /* later firmware's further fields, after a space: not ours */
 }
 
 /* Return's menu: Q2 Pod's pop-up when it says which (a title, then rows of POP_ROW), else a dark
@@ -1781,9 +1781,10 @@ static int check(void) {
         assert(pop.style == POP_MINIMAL);
         const char *junk[] = { 0, "", "minimal", "minimalist 000000 000000 000000 000000 000000 000000",
                               "modern 000000 000000 000000 000000 000000", "modern 000000 000000 000000 000000 000000 00000g",
-                              "modern 000000 000000 000000 000000 000000 000000 ", "modern 000000 000000 000000 000000 000000 0000000",
+                              "modern 000000 000000 000000 000000 000000 0000000",
                               "classic 000000 000000 000000 000000 000000 000000", "sepia 000000 000000 000000 000000 000000 000000" };
         for (unsigned i = 0; i < sizeof junk / sizeof *junk; ++i) pop.style = POP_MODERN, pop_read(junk[i]), assert(pop.style == POP_OWN);
+        pop_read("modern 000000 000000 000000 000000 000000 000000 more later"), assert(pop.style == POP_MODERN);
         /* each style's rows are where a touch finds them, and its pop-ups paint as Q2 Pod's: a pixel of
          * the chosen row's band, bar or dot, of the box, and of Classic's strip */
         static unsigned fb[W * H];
@@ -1795,6 +1796,14 @@ static int check(void) {
             int y = menu_y(), top = y + menu_top(), rh = menu_row_h();
             assert(menu_h(5) < H && y >= 0 && menu_row(W / 2, (float)(top - 1)) == -1 && menu_row(W / 2, (float)(top + 4 * rh)) == -1);
             for (int r = 0; r < MENU_ROWS; ++r) assert(menu_row(W / 2, (float)(top + r * rh + rh / 2)) == r);
+            for (int k = 0; k < 2; ++k) { /* a tap just above the box closes it; one on it, off its rows, doesn't */
+                static buddy t;
+                char tap[32];
+                init(&t, 0), t.menu = 1;
+                putn(put(putn(put(tap, "t d "), W / 2), " "), k ? y + 2 : y - 2);
+                input(&t, tap), tap[2] = 'u', input(&t, tap);
+                assert(t.menu == k && !t.quit);
+            }
             if (!style) continue;
             for (int k = 0; k < W * H; ++k) fb[k] = 0xff000000u;
             pop_box(fb, "Buddy", rows, MENU_ROWS, y, 1, 1);
