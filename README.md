@@ -16,6 +16,7 @@ shows how to use it, and how to paint your own buddy step by step.
 | Make it dizzy | Spin the wheel fast |
 | Make it say boo | Press Centre |
 | Change its colour, turn on Tamagotchi, or quit | Press Return for the menu |
+| Pick a pet | Press Return for the menu, then the Pet row: Auto, Kasper, Frosty or Custom |
 | Make it your own | Paint a `buddy.png` (see [Your own buddy](#your-own-buddy)) |
 
 The menu looks like the pop-ups of Q2 Pod's own games in your theme, Minimal, Modern or Classic, Light Mode
@@ -54,7 +55,10 @@ days awake, it floats away, and Centre brings the next egg.
 
 Paint your own and Buddy shows it instead of the ghost: save it as `buddy.png` in the `.fidget` folder on the
 microSD card, beside `q2-fidget`, and open Buddy. (`.fidget` is hidden on a Mac; Cmd+Shift+. in Finder shows
-it.) Updates keep it; App Store → Remove deletes it with the folder.
+it.) Updates keep it; App Store → Remove deletes it with the folder. Pick **Pet: Custom** in the menu to
+show it. Frosty is a snowman Buddy draws itself, shown by **Pet: Frosty**, or by **Pet: Auto** in
+December to February by the UTC date — the northern winter, so someone south of the equator who doesn't
+want a summer snowman picks Kasper.
 
 ![The template's 14 cells, numbered](buddy-guide.png)
 
@@ -98,9 +102,10 @@ input as text datagrams on `/tmp/q2-fidget.input.sock`:
 | `w N` | the wheel's raw travel, 200 a turn, rising anticlockwise |
 
 The program is one C file with no libraries: it makes its own syscalls and draws on `/dev/fb0`
-(320 x 375, the view turned clockwise, two pages). Its colour and whether Tamagotchi is on are kept in
-`.fidget/state`, and the pet in `.fidget/pet` with the time it was saved, so the next start plays through the
-minutes since by the Q2's clock. It reads `.fidget/buddy.png` when it starts, with its own PNG decoder.
+(320 x 375, the view turned clockwise, two pages). Its colour, whether Tamagotchi is on, and the pet's
+choice are kept in `.fidget/state` as a third byte, and the pet in `.fidget/pet` with the time it was saved,
+so the next start plays through the minutes since by the Q2's clock. It reads `.fidget/buddy.png` when
+**Pet: Custom** is shown, with its own PNG decoder.
 
 ## Building
 
