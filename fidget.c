@@ -4,7 +4,8 @@
  * giggle (on its face, a boop), a hold pets it (hearts), a drag picks it up and flings it, a burst
  * of taps annoys it (tongue out), a fast spin of the wheel makes it dizzy, Centre makes it say
  * boo, and left alone it dozes off. Return opens
- * the menu: Continue, its colour (blue or pink, kept), Tamagotchi (on or off, kept) and Quit.
+ * the menu: Continue, its colour (blue or pink, kept), Tamagotchi (on or off, kept), which pet
+ * (Auto, Kasper, Frosty or Custom, kept) and Quit.
  * Play/Pause and the side buttons stay the music's: Q2 Pod never sends them.
  *
  * Tamagotchi on, the same ghost is raised from an egg in real time (see "the pet" below); off, it is
@@ -223,8 +224,7 @@ static void sparks(buddy *b, float x, float y, int n, float speed) {
 }
 
 /* The menu's pick: Auto, Kasper, Frosty or Custom. */
-typedef enum { CHOICE_AUTO, CHOICE_KASPER, CHOICE_FROSTY, CHOICE_CUSTOM } buddy_choice;
-#define CHOICE_COUNT 4
+enum { CHOICE_AUTO, CHOICE_KASPER, CHOICE_FROSTY, CHOICE_CUSTOM, CHOICES };
 static void init(buddy *b, int pal) {
     *b = (buddy){ .x = HOME_X, .y = HOME_Y + 30, .sq = 1, .blink = 1.5f, .pal = pal, .pal_t = 9 };
     b->showing = CHOICE_KASPER; /* Kasper until the choice and the date say otherwise */
@@ -239,9 +239,6 @@ static float arm_dist(float x, float y, float lift, float side) {
 }
 static int is_egg(const buddy *b) { return b->on_pet && b->tm.stage == EGG; }
 
-/* Auto follows the northern winter by the UTC date (Frosty December to February, Kasper
- * otherwise), so someone south of the equator who doesn't want a summer snowman picks
- * Kasper. There is no hemisphere setting. */
 static const char *const choice_names[] = { "Auto", "Kasper", "Frosty", "Custom" };
 /* The month from UTC epoch seconds, without libc or a timezone on the Q2. */
 static int utc_month(int now) {
@@ -252,15 +249,19 @@ static int utc_month(int now) {
     int mp = (5 * doy + 2) / 153;
     return mp + (mp < 10 ? 3 : -9);
 }
+/* ponytail: Auto follows the northern winter by the UTC date, Frosty December to February; no
+ * hemisphere setting, so south of the equator pick Kasper */
 static int resolve_choice(int choice, int now) {
     if (choice != CHOICE_AUTO) return choice;
     int month = utc_month(now);
     return month == 12 || month <= 2 ? CHOICE_FROSTY : CHOICE_KASPER;
 }
 /* The pick saved as state's third byte: a digit for the choice, or, when there is none
- * (an old two-byte state, or junk), Custom if a buddy.png opens and Auto if it doesn't. */
+ * (an old two-byte state, or junk), Custom if a buddy.png opens and Auto if it doesn't.
+ * A saved Custom whose buddy.png doesn't open reads as Kasper: the ghost, nothing said. */
 static int saved_choice(const char *c, int n, int has_buddy) {
-    if (n >= 3 && c[2] >= '0' && c[2] < '0' + CHOICE_COUNT) return c[2] - '0';
+    if (n >= 3 && c[2] >= '0' && c[2] < '0' + CHOICES)
+        return c[2] - '0' == CHOICE_CUSTOM && !has_buddy ? CHOICE_KASPER : c[2] - '0';
     return has_buddy ? CHOICE_CUSTOM : CHOICE_AUTO;
 }
 static void load_shown_sheet(buddy *b); /* the sheet for the pet now shown, once, in each build */
@@ -280,7 +281,7 @@ static float frosty_snow(float x, float y) {
     float belly = ellipse(x, y - 33, 65, 55);
     return smin(head, belly, 3);
 }
-/* A floppy Santa cap with a tapered, curved silhouette instead of overlapping round blobs.
+/* A floppy Santa cap with a tapered, curved silhouette.
  * Negative values are inside the polygon. */
 static float frosty_cap(float x, float y) {
     static const float px[] = {-47, -37, -12, 7, 27, 42, 31, 14, 42};
@@ -296,7 +297,7 @@ static float frosty_cap(float x, float y) {
     }
     return inside ? -d : d;
 }
-/* A curved hat cuff, not an ellipse: a softly rounded ribbon whose top and bottom follow
+/* A curved hat cuff: a softly rounded ribbon whose top and bottom follow
  * the forehead, sagging at both sides. */
 static float frosty_brim(float x, float y) {
     float mid = -75 + 0.005f * x * x;
@@ -476,7 +477,7 @@ static int look(const buddy *b) {
     return b->blink_t > 0 ? L_BLINK : L_NORMAL;
 }
 
-static unsigned sheet[SHEET_W * SHEET_H]; /* premultiplied, so a bilinear sample has no dark fringe */
+static unsigned sheet[SHEET_W * SHEET_H] __attribute__((aligned(65536))); /* premultiplied, so a bilinear sample has no dark fringe */
 static int sheet_ok;
 /* the file and its rows: scratch, given back once read (load). Aligned to 64 KB, MIPS's biggest page */
 static unsigned char sheet_file[SHEET_MAX] __attribute__((aligned(65536)));
@@ -826,7 +827,7 @@ static void menu_pick(buddy *b) {
     if (b->sel == 0) b->menu = 0;
     else if (b->sel == 1) recolour(b);
     else if (b->sel == 2) pet_toggle(b);
-    else if (b->sel == 3) b->buddy_choice = (b->buddy_choice + 1) % CHOICE_COUNT; /* shown next frame */
+    else if (b->sel == 3) b->buddy_choice = (b->buddy_choice + 1) % CHOICES; /* shown next frame */
     else b->quit = 1;
 }
 static void menu_input(buddy *b, char kind, char what, int x, int y) {
@@ -1360,8 +1361,10 @@ static col frosty_col(const buddy *b, const palette *P, int l,
                       float x, float y, float d, float gx, float gy) {
     palette snow = { C(.99f, 1, 1), C(.67f, .84f, .94f), P->glow, P->eye };
     col bc = shade(&snow, x, y, d, gx, gy);
-    float snow_d = frosty_snow(x, y);
-    float hat_d = frosty_hat(x, y), twig_d = frosty_twigs(x, y);
+    /* the hat's ink lies above y = -53.4 and the twigs' beyond |x| = 45.5 */
+    float hat_d = y < -51 ? frosty_hat(x, y) : 1;
+    float snow_d = 1, twig_d = 1;
+    if (absf(x) > 45) snow_d = frosty_snow(x, y), twig_d = frosty_twigs(x, y);
     if (twig_d < 0 && snow_d > 0) /* arms behind the snow */
         bc = cmix(C(.62f, .66f, .68f), C(.81f, .84f, .85f), sat(0.48f - twig_d / 9));
     if (hat_d < 0) { /* the hat over its head */
@@ -1372,7 +1375,7 @@ static col frosty_col(const buddy *b, const palette *P, int l,
         col white = cmix(C(.75f, .90f, .97f), C(1, 1, 1), sat(0.62f - (x + y + 76) / 145));
         bc = cmix(red, white, pale);
     }
-    if (l < L_EGG && y > -55 && y < 17 && absf(x) < 53) bc = face(b, P, l, x, y, bc);
+    if (l < L_EGG && y > -55 && y < HEAD_Y + 50 && absf(x) < 53) bc = face(b, P, l, x, y, bc);
     return bc;
 }
 /* the ghost's colour at a point inside, looking l: shade's, speckled on an egg, faced otherwise */
@@ -1972,26 +1975,36 @@ static int check(void) {
     assert(b.showing == CHOICE_KASPER);
     b.buddy_choice = CHOICE_FROSTY, update_shown(&b);
     assert(b.showing == CHOICE_FROSTY);
+    assert(body_dist(&b, 0, -100) < 0 && body_dist(&b, 0, 0) < 0); /* Frosty's cap and snow */
+    {
+        tama keep = b.tm; /* an adult's halo sits above the cap */
+        b.on_pet = 1, b.tm.stage = ADULT, b.tm.form = 1;
+        assert(body_dist(&b, 0, -132) < 0);
+        b.tm.form = 0, assert(body_dist(&b, 0, -132) > 0);
+        b.on_pet = 0, b.tm = keep;
+    }
     /* state's third byte: a saved pick, missing with and without a buddy.png, and junk */
     assert(saved_choice("002", 3, 0) == CHOICE_FROSTY);
     assert(saved_choice("002", 3, 1) == CHOICE_FROSTY);
     assert(saved_choice("00", 2, 0) == CHOICE_AUTO && saved_choice("00", 2, 1) == CHOICE_CUSTOM);
     assert(saved_choice("009", 3, 0) == CHOICE_AUTO && saved_choice("009", 3, 1) == CHOICE_CUSTOM);
-    assert(saved_choice("003", 3, 0) == CHOICE_CUSTOM);
+    assert(saved_choice("003", 3, 0) == CHOICE_KASPER && saved_choice("003", 3, 1) == CHOICE_CUSTOM);
     /* the menu's Pet row cycles Auto, Kasper, Frosty, Custom */
     b.buddy_choice = CHOICE_AUTO, b.sel = 3, menu_pick(&b);
     assert(b.buddy_choice == CHOICE_KASPER);
     b.sel = 3, menu_pick(&b), assert(b.buddy_choice == CHOICE_FROSTY);
     b.sel = 3, menu_pick(&b), assert(b.buddy_choice == CHOICE_CUSTOM);
     b.sel = 3, menu_pick(&b), assert(b.buddy_choice == CHOICE_AUTO);
+    b.sel = 4, menu_pick(&b), assert(b.quit); /* Quit is the last row */
+    b.quit = 0;
     b.buddy_choice = CHOICE_KASPER, b.now = NOW, update_shown(&b);
     /* Frosty draws, and differently from Kasper, at its smaller size */
     {
-        static unsigned frosty_shot[W * H];
-        render(&b, frosty_shot);
+        static unsigned kasper_shot[W * H];
+        render(&b, kasper_shot);
         b.buddy_choice = CHOICE_FROSTY, update_shown(&b);
         render(&b, canvas);
-        assert(memcmp(frosty_shot, canvas, sizeof frosty_shot));
+        assert(memcmp(kasper_shot, canvas, sizeof kasper_shot));
         b.buddy_choice = CHOICE_KASPER, update_shown(&b);
     }
     /* off is the toy: Centre says boo and the pet's clock doesn't run */
@@ -2216,7 +2229,9 @@ int main(int argc, char **argv) {
     static buddy b;
     init(&b, pal);
     b.now = NOW;
-    b.buddy_choice = CHOICE_KASPER, update_shown(&b); /* the preview draws Kasper unless told otherwise */
+    const char *p = getenv("BUDDY_PET"); /* the preview draws Kasper unless BUDDY_PET says 0-3 */
+    b.buddy_choice = p && *p >= '0' && *p < '0' + CHOICES ? *p - '0' : CHOICE_KASPER;
+    update_shown(&b);
     const char *why = argc > 5 ? sheet_read(argv[5]) : 0; /* preview.sh's sheet: a buddy of your own */
     if (why) b.note = why, b.note_t = 6;
     char path[256];
@@ -2346,16 +2361,12 @@ static void paths(const char *argv0) {
  * pet gives the decoded sheet back, and a missing buddy.png says so and falls back. */
 static void load_shown_sheet(buddy *b) {
     if (b->showing != CHOICE_CUSTOM) {
-        if (sheet_ok) { /* leaving a custom sheet for a drawn pet: its 2 MB back */
-            sheet_ok = 0;
-            long start = (long)sheet & ~0xffffL;
-            sc(SYS_madvise, start, (long)((long)sheet + (long)sizeof sheet - start + 0xffffL) & ~0xffffL,
-               MADV_DONTNEED, 0, 0, 0);
-        }
+        sheet_ok = 0; /* a drawn pet: the decoded sheet back, whole 64 KB only */
+        sc(SYS_madvise, (long)sheet, (long)(sizeof sheet & ~0xffffu), MADV_DONTNEED, 0, 0, 0);
         return;
     }
     int fd = (int)sc(SYS_open, (long)sheet_path, O_CLOEXEC, 0, 0, 0, 0);
-    if (fd < 0) { b->note = "No buddy.png found", b->note_t = 5; return; } /* none: the ghost, nothing said */
+    if (fd < 0) { b->note = "No buddy.png found", b->note_t = 5; return; } /* none: the ghost, and the line says so */
     long n = 0, k;
     for (; n < SHEET_MAX && (k = sc(SYS_read, fd, (long)(sheet_file + n), SHEET_MAX - n, 0, 0, 0)) > 0;) n += k;
     sc(SYS_close, fd, 0, 0, 0, 0, 0);
@@ -2376,7 +2387,6 @@ static void load(buddy *b) {
     fd = (int)sc(SYS_open, (long)sheet_path, O_CLOEXEC, 0, 0, 0, 0);
     b->buddy_choice = saved_choice(c, (int)nr, fd >= 0);
     if (fd >= 0) sc(SYS_close, fd, 0, 0, 0, 0, 0);
-    b->showing = -1; /* the first frame resolves it and loads the sheet, once */
     long n = 0;
     fd = (int)sc(SYS_open, (long)pet_path, O_CLOEXEC, 0, 0, 0, 0);
     if (fd >= 0) n = sc(SYS_read, fd, (long)&b->tm, sizeof b->tm, 0, 0, 0), sc(SYS_close, fd, 0, 0, 0, 0, 0);

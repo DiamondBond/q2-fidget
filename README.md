@@ -54,11 +54,11 @@ days awake, it floats away, and Centre brings the next egg.
 ## Your own buddy
 
 Paint your own and Buddy shows it instead of the ghost: save it as `buddy.png` in the `.fidget` folder on the
-microSD card, beside `q2-fidget`, and open Buddy. (`.fidget` is hidden on a Mac; Cmd+Shift+. in Finder shows
-it.) Updates keep it; App Store → Remove deletes it with the folder. Pick **Pet: Custom** in the menu to
-show it. Frosty is a snowman Buddy draws itself, shown by **Pet: Frosty**, or by **Pet: Auto** in
-December to February by the UTC date — the northern winter, so someone south of the equator who doesn't
-want a summer snowman picks Kasper.
+microSD card, beside `q2-fidget`, then open Buddy and pick **Pet: Custom** in the menu. (`.fidget` is hidden
+on a Mac; Cmd+Shift+. in Finder shows it.) Updates keep it; App Store → Remove deletes it with the folder.
+Frosty is a snowman Buddy draws itself, shown by **Pet: Frosty**, or by **Pet: Auto** in December to
+February by the UTC date. That is the northern winter, so south of the equator pick **Pet: Kasper**, the
+ghost, to keep it all year.
 
 ![The template's 14 cells, numbered](buddy-guide.png)
 
@@ -102,9 +102,9 @@ input as text datagrams on `/tmp/q2-fidget.input.sock`:
 | `w N` | the wheel's raw travel, 200 a turn, rising anticlockwise |
 
 The program is one C file with no libraries: it makes its own syscalls and draws on `/dev/fb0`
-(320 x 375, the view turned clockwise, two pages). Its colour, whether Tamagotchi is on, and the pet's
-choice are kept in `.fidget/state` as a third byte, and the pet in `.fidget/pet` with the time it was saved,
-so the next start plays through the minutes since by the Q2's clock. It reads `.fidget/buddy.png` when
+(320 x 375, the view turned clockwise, two pages). `.fidget/state` keeps a digit each for its colour,
+Tamagotchi and the Pet row, and `.fidget/pet` the Tamagotchi pet with the time it was saved, so the next
+start plays through the minutes since by the Q2's clock. It reads `.fidget/buddy.png` when
 **Pet: Custom** is shown, with its own PNG decoder.
 
 ## Building
