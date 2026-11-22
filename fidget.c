@@ -184,6 +184,8 @@ typedef struct {
     int menu, sel, menu_down; /* Return's menu: open, its row, the row a touch went down on, plus 1 */
     float menu_t, menu_wheel; /* seconds open, the wheel's travel towards the next row */
     int on_pet;               /* Tamagotchi mode */
+    int buddy_choice;         /* the menu's pick: Auto, Kasper, Frosty or Custom (see below) */
+    int showing;              /* the pet drawn this frame, resolved from buddy_choice and the date */
     tama tm;
     int now, save;            /* the clock, seconds since the epoch; the pet changed, to be kept */
     int icon, icon_down, stats; /* the bar's picked icon, the one a touch went down on plus 1, Stats */
@@ -220,8 +222,12 @@ static void sparks(buddy *b, float x, float y, int n, float speed) {
     }
 }
 
+/* The menu's pick: Auto, Kasper, Frosty or Custom. */
+typedef enum { CHOICE_AUTO, CHOICE_KASPER, CHOICE_FROSTY, CHOICE_CUSTOM } buddy_choice;
+#define CHOICE_COUNT 4
 static void init(buddy *b, int pal) {
     *b = (buddy){ .x = HOME_X, .y = HOME_Y + 30, .sq = 1, .blink = 1.5f, .pal = pal, .pal_t = 9 };
+    b->showing = CHOICE_KASPER; /* Kasper until the choice and the date say otherwise */
     b->vy = -160, b->vsq = 3; /* pops up into view */
     moods(b, SURPRISE, 0.35f, HAPPY, 1.0f);
 }
@@ -232,11 +238,100 @@ static float arm_dist(float x, float y, float lift, float side) {
     return seg(x, y, sx, sy, sx + side * fcos(a) * 20, sy + fsin(a) * 20) - 10.5f;
 }
 static int is_egg(const buddy *b) { return b->on_pet && b->tm.stage == EGG; }
+
+/* Auto follows the northern winter by the UTC date (Frosty December to February, Kasper
+ * otherwise), so someone south of the equator who doesn't want a summer snowman picks
+ * Kasper. There is no hemisphere setting. */
+static const char *const choice_names[] = { "Auto", "Kasper", "Frosty", "Custom" };
+/* The month from UTC epoch seconds, without libc or a timezone on the Q2. */
+static int utc_month(int now) {
+    int z = now / 86400 + 719468;
+    int era = z / 146097, doe = z - era * 146097;
+    int yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    int mp = (5 * doy + 2) / 153;
+    return mp + (mp < 10 ? 3 : -9);
+}
+static int resolve_choice(int choice, int now) {
+    if (choice != CHOICE_AUTO) return choice;
+    int month = utc_month(now);
+    return month == 12 || month <= 2 ? CHOICE_FROSTY : CHOICE_KASPER;
+}
+/* The pick saved as state's third byte: a digit for the choice, or, when there is none
+ * (an old two-byte state, or junk), Custom if a buddy.png opens and Auto if it doesn't. */
+static int saved_choice(const char *c, int n, int has_buddy) {
+    if (n >= 3 && c[2] >= '0' && c[2] < '0' + CHOICE_COUNT) return c[2] - '0';
+    return has_buddy ? CHOICE_CUSTOM : CHOICE_AUTO;
+}
+static void load_shown_sheet(buddy *b); /* the sheet for the pet now shown, once, in each build */
+/* Work out which pet shows, once a frame, before drawing. body_dist and body_col read
+ * showing, never the choice or the date. When it changes, the sheet loads here, once. */
+static void update_shown(buddy *b) {
+    int want = resolve_choice(b->buddy_choice, b->now);
+    if (want == b->showing) return;
+    b->showing = want;
+    load_shown_sheet(b);
+}
+
+/* Frosty, drawn with the same signed-distance renderer as Kasper: snow, a soft hat and
+ * twig arms are volumes, not a sprite sheet. */
+static float frosty_snow(float x, float y) {
+    float head = ellipse(x, y + 31, 54, 53);
+    float belly = ellipse(x, y - 33, 65, 55);
+    return smin(head, belly, 3);
+}
+/* A floppy Santa cap with a tapered, curved silhouette instead of overlapping round blobs.
+ * Negative values are inside the polygon. */
+static float frosty_cap(float x, float y) {
+    static const float px[] = {-47, -37, -12, 7, 27, 42, 31, 14, 42};
+    static const float py[] = {-79, -108, -130, -132, -120, -108, -101, -108, -79};
+    float d = 10000;
+    int inside = 0;
+    for (int i = 0; i < 9; ++i) {
+        int j = (i + 1) % 9;
+        d = minf(d, seg(x, y, px[i], py[i], px[j], py[j]));
+        if ((py[i] > y) != (py[j] > y) &&
+            x < px[i] + (px[j] - px[i]) * (y - py[i]) / (py[j] - py[i]))
+            inside = !inside;
+    }
+    return inside ? -d : d;
+}
+/* A curved hat cuff, not an ellipse: a softly rounded ribbon whose top and bottom follow
+ * the forehead, sagging at both sides. */
+static float frosty_brim(float x, float y) {
+    float mid = -75 + 0.005f * x * x;
+    float dx = absf(x) - 45;
+    float dy = absf(y - mid) - 6;
+    return minf(maxf(dx, dy), 0) + len(maxf(dx, 0), maxf(dy, 0)) - 5;
+}
+static float frosty_hat(float x, float y) {
+    float cap = frosty_cap(x, y);
+    float brim = frosty_brim(x, y);
+    float pom = len(x - 44, y + 109) - 11;
+    return minf(minf(cap, brim), pom);
+}
+static float frosty_twigs(float x, float y) {
+    float ax = absf(x);
+    float arm = seg(ax, y, 49, 18, 89, 4) - 3.5f;
+    float fork1 = seg(ax, y, 77, 8, 80, -7) - 2.4f;
+    float fork2 = seg(ax, y, 83, 6, 95, -1) - 2.4f;
+    return minf(arm, minf(fork1, fork2));
+}
+static float frosty_dist(float x, float y) {
+    return minf(frosty_snow(x, y), minf(frosty_hat(x, y), frosty_twigs(x, y)));
+}
 static float crown_dist(int form, float x, float y) { /* an adult's halo (form 1) or horns (-1) */
     return form > 0 ? absf(len(x, (y + 98) * 3.2f) - 30) - 5 : seg(absf(x), y, 28, -72, 37, -94) - 6;
 }
 static float body_dist(const buddy *b, float x, float y) {
     if (is_egg(b)) return ellipse(x, y - 5, 54, 68);
+    if (b->showing == CHOICE_FROSTY) { /* drawn at 85% of its size, so the hat stays on screen */
+        float fx = x / 0.85f, fy = y / 0.85f, d = frosty_dist(fx, fy);
+        /* an adult's halo and horns sit higher, clear of the hat */
+        if (b->on_pet && b->tm.form > 0) d = minf(d, crown_dist(1, fx, fy + 48));
+        if (b->on_pet && b->tm.form < 0) d = smin(d, crown_dist(-1, fx, fy + 48), 5);
+        return d;
+    }
     float head = len(x, y - HEAD_Y) - HEAD_R;
     float hem = FOOT_Y + 5.5f * fcos(x * 0.155f + b->wave) + 2 * fsin(x * 0.07f - b->wave * 0.6f);
     float w = HEAD_R + 8 * smooth(HEAD_Y, FOOT_Y, y), r = 12;
@@ -698,7 +793,7 @@ static void pop_read(const char *s) { /* anything short of a whole value: Buddy'
 
 /* Return's menu: Q2 Pod's pop-up when it says which (a title, then rows of POP_ROW), else a dark
  * box framed in the tone, the row picked in the tone and the others grey */
-#define MENU_ROWS 4
+#define MENU_ROWS 5
 #define MENU_W 281
 #define MENU_X ((W - MENU_W) / 2)
 #define MENU_STEP 28 /* the wheel's raw travel a row: as a menu tick at 50% sensitivity */
@@ -731,6 +826,7 @@ static void menu_pick(buddy *b) {
     if (b->sel == 0) b->menu = 0;
     else if (b->sel == 1) recolour(b);
     else if (b->sel == 2) pet_toggle(b);
+    else if (b->sel == 3) b->buddy_choice = (b->buddy_choice + 1) % CHOICE_COUNT; /* shown next frame */
     else b->quit = 1;
 }
 static void menu_input(buddy *b, char kind, char what, int x, int y) {
@@ -1258,8 +1354,31 @@ static col shade(const palette *P, float x, float y, float d, float gx, float gy
     c = cadd(c, C(1, 1, 1), 0.28f * expneg(sh * sh / 260));
     return c;
 }
+/* Frosty's colour: snow shaded like the ghost, a red cap with a white brim and pom-pom,
+ * grey twig arms behind the snow, and the ghost's face so the eyes keep their quality. */
+static col frosty_col(const buddy *b, const palette *P, int l,
+                      float x, float y, float d, float gx, float gy) {
+    palette snow = { C(.99f, 1, 1), C(.67f, .84f, .94f), P->glow, P->eye };
+    col bc = shade(&snow, x, y, d, gx, gy);
+    float snow_d = frosty_snow(x, y);
+    float hat_d = frosty_hat(x, y), twig_d = frosty_twigs(x, y);
+    if (twig_d < 0 && snow_d > 0) /* arms behind the snow */
+        bc = cmix(C(.62f, .66f, .68f), C(.81f, .84f, .85f), sat(0.48f - twig_d / 9));
+    if (hat_d < 0) { /* the hat over its head */
+        float brim = frosty_brim(x, y);
+        float pom = len(x - 44, y + 109) - 11;
+        float pale = 1 - smooth(-2, 2, minf(brim, pom));
+        col red = cmix(C(.77f, .31f, .38f), C(1, .64f, .67f), sat(0.57f - (x + y + 68) / 135));
+        col white = cmix(C(.75f, .90f, .97f), C(1, 1, 1), sat(0.62f - (x + y + 76) / 145));
+        bc = cmix(red, white, pale);
+    }
+    if (l < L_EGG && y > -55 && y < 17 && absf(x) < 53) bc = face(b, P, l, x, y, bc);
+    return bc;
+}
 /* the ghost's colour at a point inside, looking l: shade's, speckled on an egg, faced otherwise */
 static col body_col(const buddy *b, const palette *P, int l, float x, float y, float d, float gx, float gy) {
+    if (b->showing == CHOICE_FROSTY && l != L_EGG) /* drawn at 85%, like body_dist */
+        return frosty_col(b, P, l, x / 0.85f, y / 0.85f, d, gx, gy);
     col bc = shade(P, x, y, d, gx, gy);
     if (l == L_EGG) {
         float spot = minf(minf(ellipse(x + 22, y + 26, 10, 12), ellipse(x - 20, y + 2, 12, 10)), ellipse(x + 8, y - 36, 9, 8));
@@ -1295,7 +1414,8 @@ static void draw_buddy(const buddy *b, unsigned *fb) {
 
     /* its box, turned and squashed, with room for the glow */
     float c = absf(fcos(b->tilt)), s = absf(fsin(b->tilt)), sx = clampf(1 + (1 - b->sq) * 0.9f, 0.75f, 1.3f);
-    float hw = (HEAD_R + 85) * sx * S, top = (HEAD_Y - HEAD_R - (b->on_pet ? 95 : 60)) * b->sq * S, bot = (FOOT_Y + 60) * b->sq * S;
+    /* Frosty's hat stands above the ghost's head, so its glow box starts higher or the glow is cut flat */
+    float hw = (HEAD_R + 85) * sx * S, top = (HEAD_Y - HEAD_R - (b->on_pet ? 95 : 60) - (b->showing == CHOICE_FROSTY ? 48 : 0)) * b->sq * S, bot = (FOOT_Y + 60) * b->sq * S;
     float hh = (bot - top) / 2, cy = (bot + top) / 2;
     float ew = c * hw + s * hh, eh = s * hw + c * hh;
     float ox = b->x - fsin(b->tilt) * cy, oy = b->y + fcos(b->tilt) * cy;
@@ -1516,10 +1636,11 @@ static void draw_menu(const buddy *b, unsigned *fb) {
     const palette *P = &pals[b->pal];
     float in = sat(b->menu_t / 0.12f);
     dim(fb, 0.55f * in);
-    char colour[24], pet[24];
+    char colour[24], pet[24], chosen[32];
     put(put(colour, "Colour: "), pal_names[b->pal]);
     put(put(pet, "Tamagotchi: "), b->on_pet ? "On" : "Off");
-    const char *rows[MENU_ROWS] = { "Continue", colour, pet, "Quit" };
+    put(put(chosen, "Pet: "), choice_names[b->buddy_choice]);
+    const char *rows[MENU_ROWS] = { "Continue", colour, pet, chosen, "Quit" };
     if (pop.style) {
         pop_box(fb, "Buddy", rows, MENU_ROWS, menu_y(), b->sel, in);
         return;
@@ -1707,6 +1828,7 @@ static float glass(int y) {
     float d = maxf(maxf((float)(GLASS_R - y), (float)(y - (H - GLASS_R))), 0);
     return GLASS_R - fsqrt(GLASS_R * GLASS_R - d * d);
 }
+static void load_shown_sheet(buddy *b) { (void)b; } /* on the host the sheet is read explicitly */
 static const char *sheet_read(const char *path) { /* 0 when it's on the sheet, else why not */
     FILE *in = fopen(path, "rb");
     if (!in) return "buddy.png: no such file";
@@ -1722,6 +1844,7 @@ static void template(unsigned char *rgba) {
     static buddy b;
     for (int l = 0; l < LOOKS; ++l) {
         init(&b, 0);
+        b.buddy_choice = CHOICE_KASPER, b.showing = CHOICE_KASPER; /* the template is Kasper */
         b.arml = b.armr = 0.12f, b.on_pet = l == L_EGG, b.blink_t = l == L_BLINK ? 0.08f : 0;
         for (int j = 0; j < CELL; ++j)
             for (int i = 0; i < CELL; ++i) {
@@ -1788,13 +1911,13 @@ static int check(void) {
         /* each style's rows are where a touch finds them, and its pop-ups paint as Q2 Pod's: a pixel of
          * the chosen row's band, bar or dot, of the box, and of Classic's strip */
         static unsigned fb[W * H];
-        const char *rows[MENU_ROWS] = { "Continue", "Colour: Blue", "Tamagotchi: Off", "Quit" };
+        const char *rows[MENU_ROWS] = { "Continue", "Colour: Blue", "Tamagotchi: Off", "Pet: Kasper", "Quit" };
         for (int style = POP_OWN; style <= POP_CLASSIC; ++style) {
             pop.style = style;
             for (int c = 0; c < POP_ROW; ++c) pop.head[c] = C(0, 0, (float)c / 64), pop.band[c] = C(0, (float)c / 64, 1);
             pop.box = C(1, 1, 1), pop.frame = C(.5f, .5f, .5f), pop.pick = C(1, 0, 0);
             int y = menu_y(), top = y + menu_top(), rh = menu_row_h();
-            assert(menu_h(5) < H && y >= 0 && menu_row(W / 2, (float)(top - 1)) == -1 && menu_row(W / 2, (float)(top + 4 * rh)) == -1);
+            assert(menu_h(MENU_ROWS) < H && y >= 0 && menu_row(W / 2, (float)(top - 1)) == -1 && menu_row(W / 2, (float)(top + MENU_ROWS * rh)) == -1);
             for (int r = 0; r < MENU_ROWS; ++r) assert(menu_row(W / 2, (float)(top + r * rh + rh / 2)) == r);
             for (int k = 0; k < 2; ++k) { /* a tap just above the box closes it; one on it, off its rows, doesn't */
                 static buddy t;
@@ -1833,6 +1956,44 @@ static int check(void) {
         }
     init(&b, 0);
     b.now = NOW;
+    /* the check draws Kasper unless told otherwise: NOW is January 2027, when Auto shows Frosty */
+    b.buddy_choice = CHOICE_KASPER, update_shown(&b);
+    assert(b.showing == CHOICE_KASPER);
+    /* Auto follows the northern winter by the UTC date, across the season's edges */
+    assert(utc_month(1796083199) == 11 && utc_month(1796083200) == 12);
+    assert(utc_month(1803859199) == 2 && utc_month(1803859200) == 3);
+    b.buddy_choice = CHOICE_AUTO, b.now = 1796083199, update_shown(&b);
+    assert(b.showing == CHOICE_KASPER);
+    b.now = 1796083200, update_shown(&b);
+    assert(b.showing == CHOICE_FROSTY);
+    b.now = 1803859199, update_shown(&b);
+    assert(b.showing == CHOICE_FROSTY);
+    b.now = 1803859200, update_shown(&b);
+    assert(b.showing == CHOICE_KASPER);
+    b.buddy_choice = CHOICE_FROSTY, update_shown(&b);
+    assert(b.showing == CHOICE_FROSTY);
+    /* state's third byte: a saved pick, missing with and without a buddy.png, and junk */
+    assert(saved_choice("002", 3, 0) == CHOICE_FROSTY);
+    assert(saved_choice("002", 3, 1) == CHOICE_FROSTY);
+    assert(saved_choice("00", 2, 0) == CHOICE_AUTO && saved_choice("00", 2, 1) == CHOICE_CUSTOM);
+    assert(saved_choice("009", 3, 0) == CHOICE_AUTO && saved_choice("009", 3, 1) == CHOICE_CUSTOM);
+    assert(saved_choice("003", 3, 0) == CHOICE_CUSTOM);
+    /* the menu's Pet row cycles Auto, Kasper, Frosty, Custom */
+    b.buddy_choice = CHOICE_AUTO, b.sel = 3, menu_pick(&b);
+    assert(b.buddy_choice == CHOICE_KASPER);
+    b.sel = 3, menu_pick(&b), assert(b.buddy_choice == CHOICE_FROSTY);
+    b.sel = 3, menu_pick(&b), assert(b.buddy_choice == CHOICE_CUSTOM);
+    b.sel = 3, menu_pick(&b), assert(b.buddy_choice == CHOICE_AUTO);
+    b.buddy_choice = CHOICE_KASPER, b.now = NOW, update_shown(&b);
+    /* Frosty draws, and differently from Kasper, at its smaller size */
+    {
+        static unsigned frosty_shot[W * H];
+        render(&b, frosty_shot);
+        b.buddy_choice = CHOICE_FROSTY, update_shown(&b);
+        render(&b, canvas);
+        assert(memcmp(frosty_shot, canvas, sizeof frosty_shot));
+        b.buddy_choice = CHOICE_KASPER, update_shown(&b);
+    }
     /* off is the toy: Centre says boo and the pet's clock doesn't run */
     input(&b, "k u 218");
     assert(b.mood == BOO && g->magic == 0);
@@ -2055,6 +2216,7 @@ int main(int argc, char **argv) {
     static buddy b;
     init(&b, pal);
     b.now = NOW;
+    b.buddy_choice = CHOICE_KASPER, update_shown(&b); /* the preview draws Kasper unless told otherwise */
     const char *why = argc > 5 ? sheet_read(argv[5]) : 0; /* preview.sh's sheet: a buddy of your own */
     if (why) b.note = why, b.note_t = 6;
     char path[256];
@@ -2091,6 +2253,7 @@ int main(int argc, char **argv) {
             if (f == 30 * 20) b.idle = SLEEP_S;          /* then left alone: asleep */
         }
         for (int k = 0; k < 4; ++k) step(&b, 1.0f / 120);
+        update_shown(&b);
         render(&b, canvas);
         if (dir[0] == '-') continue; /* "-": time the renderer alone */
         snprintf(path, sizeof path, "%s/f%04d.ppm", dir, f);
@@ -2166,8 +2329,8 @@ static int now_s(void) {
     return (int)ts[0];
 }
 
-/* Kept beside the binary: "<dir>/state", the colour's digit and Tamagotchi's; "<dir>/pet", the pet;
- * and the user's own "<dir>/buddy.png", read only */
+/* Kept beside the binary: "<dir>/state", the colour's digit, Tamagotchi's, and the pet's
+ * choice as a third byte; "<dir>/pet", the pet; and the user's own "<dir>/buddy.png", read only */
 static char state_path[200], pet_path[200], pet_new[200], sheet_path[200];
 static void paths(const char *argv0) {
     int n = 0, slash = -1;
@@ -2179,21 +2342,22 @@ static void paths(const char *argv0) {
     put(pet_new + slash + 1, "pet.new");
     put(sheet_path + slash + 1, "buddy.png");
 }
-static void load(buddy *b) {
-    char c[2] = { 0, 0 };
-    int fd = (int)sc(SYS_open, (long)state_path, O_CLOEXEC, 0, 0, 0, 0);
-    if (fd >= 0) sc(SYS_read, fd, (long)c, 2, 0, 0, 0), sc(SYS_close, fd, 0, 0, 0, 0, 0);
-    if (c[0] >= '0' && c[0] < '0' + PALS) b->pal = c[0] - '0';
-    b->on_pet = c[1] == '1';
-    long n = 0;
-    fd = (int)sc(SYS_open, (long)pet_path, O_CLOEXEC, 0, 0, 0, 0);
-    if (fd >= 0) n = sc(SYS_read, fd, (long)&b->tm, sizeof b->tm, 0, 0, 0), sc(SYS_close, fd, 0, 0, 0, 0, 0);
-    if (n != (long)sizeof b->tm || !tama_ok(&b->tm)) b->tm = (tama){ 0 };
-    if (b->on_pet && b->tm.magic != TAMA_MAGIC) tama_new(&b->tm, b->now);
-    fd = (int)sc(SYS_open, (long)sheet_path, O_CLOEXEC, 0, 0, 0, 0);
-    if (fd < 0) return; /* none: the ghost, nothing said */
-    long k;
-    for (n = 0; n < SHEET_MAX && (k = sc(SYS_read, fd, (long)(sheet_file + n), SHEET_MAX - n, 0, 0, 0)) > 0;) n += k;
+/* The sheet for the pet now shown, once, when it changes. Custom reads buddy.png; a drawn
+ * pet gives the decoded sheet back, and a missing buddy.png says so and falls back. */
+static void load_shown_sheet(buddy *b) {
+    if (b->showing != CHOICE_CUSTOM) {
+        if (sheet_ok) { /* leaving a custom sheet for a drawn pet: its 2 MB back */
+            sheet_ok = 0;
+            long start = (long)sheet & ~0xffffL;
+            sc(SYS_madvise, start, (long)((long)sheet + (long)sizeof sheet - start + 0xffffL) & ~0xffffL,
+               MADV_DONTNEED, 0, 0, 0);
+        }
+        return;
+    }
+    int fd = (int)sc(SYS_open, (long)sheet_path, O_CLOEXEC, 0, 0, 0, 0);
+    if (fd < 0) { b->note = "No buddy.png found", b->note_t = 5; return; } /* none: the ghost, nothing said */
+    long n = 0, k;
+    for (; n < SHEET_MAX && (k = sc(SYS_read, fd, (long)(sheet_file + n), SHEET_MAX - n, 0, 0, 0)) > 0;) n += k;
     sc(SYS_close, fd, 0, 0, 0, 0, 0);
     const char *why = sheet_load(n);
     if (why) b->note = why, b->note_t = 6;
@@ -2201,10 +2365,28 @@ static void load(buddy *b) {
     sc(SYS_madvise, (long)sheet_file, (long)(sizeof sheet_file & ~0xffffu), MADV_DONTNEED, 0, 0, 0);
     sc(SYS_madvise, (long)sheet_raw, (long)(sizeof sheet_raw & ~0xffffu), MADV_DONTNEED, 0, 0, 0);
 }
+static void load(buddy *b) {
+    char c[3] = { 0, 0, 0 };
+    long nr = 0;
+    int fd = (int)sc(SYS_open, (long)state_path, O_CLOEXEC, 0, 0, 0, 0);
+    if (fd >= 0) nr = sc(SYS_read, fd, (long)c, 3, 0, 0, 0), sc(SYS_close, fd, 0, 0, 0, 0, 0);
+    if (c[0] >= '0' && c[0] < '0' + PALS) b->pal = c[0] - '0';
+    b->on_pet = c[1] == '1';
+    /* a saved pick, or Custom when a buddy.png opens and Auto when it doesn't */
+    fd = (int)sc(SYS_open, (long)sheet_path, O_CLOEXEC, 0, 0, 0, 0);
+    b->buddy_choice = saved_choice(c, (int)nr, fd >= 0);
+    if (fd >= 0) sc(SYS_close, fd, 0, 0, 0, 0, 0);
+    b->showing = -1; /* the first frame resolves it and loads the sheet, once */
+    long n = 0;
+    fd = (int)sc(SYS_open, (long)pet_path, O_CLOEXEC, 0, 0, 0, 0);
+    if (fd >= 0) n = sc(SYS_read, fd, (long)&b->tm, sizeof b->tm, 0, 0, 0), sc(SYS_close, fd, 0, 0, 0, 0, 0);
+    if (n != (long)sizeof b->tm || !tama_ok(&b->tm)) b->tm = (tama){ 0 };
+    if (b->on_pet && b->tm.magic != TAMA_MAGIC) tama_new(&b->tm, b->now);
+}
 static void save_state(const buddy *b) {
-    char c[2] = { (char)('0' + b->pal), b->on_pet ? '1' : '0' };
+    char c[3] = { (char)('0' + b->pal), b->on_pet ? '1' : '0', (char)('0' + b->buddy_choice) };
     int fd = (int)sc(SYS_open, (long)state_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644, 0, 0, 0);
-    if (fd >= 0) sc(SYS_write, fd, (long)c, 2, 0, 0, 0), sc(SYS_close, fd, 0, 0, 0, 0, 0);
+    if (fd >= 0) sc(SYS_write, fd, (long)c, 3, 0, 0, 0), sc(SYS_close, fd, 0, 0, 0, 0, 0);
 }
 /* whole or not at all: a TERM or a pulled battery mid-write keeps the last one */
 static void save_pet(const tama *g) {
@@ -2246,7 +2428,7 @@ int main(int argc, char **argv) {
     init(&bud, 0);
     bud.now = now_s();
     load(&bud);
-    int pal = bud.pal, on_pet = bud.on_pet;
+    int pal = bud.pal, on_pet = bud.on_pet, buddy_choice = bud.buddy_choice;
     long long last = now_ms(), acc = 0, next = last, saved = last;
     while (!bud.quit) {
         long long t = now_ms();
@@ -2262,6 +2444,7 @@ int main(int argc, char **argv) {
         acc += t - last, last = t;
         if (acc > 100) acc = 100; /* after a stall, no catching up in one go */
         for (; acc >= 8; acc -= 8) step(&bud, 0.008f);
+        update_shown(&bud); /* which pet shows, once a frame, before drawing */
         render(&bud, canvas);
         /* turned clockwise onto the portrait panel: view (x, y) is panel (H-1-y, x) */
         unsigned *page = mem + back * line;
@@ -2275,7 +2458,8 @@ int main(int argc, char **argv) {
         back = back ? 0 : W;
         next = t + (lively(&bud) ? 16 : 33);
         /* now: a held Return's TERM saves nothing */
-        if (bud.pal != pal || bud.on_pet != on_pet) pal = bud.pal, on_pet = bud.on_pet, save_state(&bud);
+        if (bud.pal != pal || bud.on_pet != on_pet || bud.buddy_choice != buddy_choice)
+            pal = bud.pal, on_pet = bud.on_pet, buddy_choice = bud.buddy_choice, save_state(&bud);
         if (bud.save || (bud.on_pet && t - saved > 5 * 60 * 1000)) bud.save = 0, saved = t, save_pet(&bud.tm);
     }
     if (bud.tm.magic == TAMA_MAGIC) save_pet(&bud.tm);
