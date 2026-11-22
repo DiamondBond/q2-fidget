@@ -10,7 +10,7 @@
  *
  * Tamagotchi on, the same ghost is raised from an egg in real time (see "the pet" below); off, it is
  * the toy above and the pet's clock stops. A buddy.png beside the program, a sheet of looks its owner
- * painted, is drawn instead of the ghost (see "a buddy of your own").
+ * painted, is drawn instead of the ghost when Pet is Custom (see "a buddy of your own").
  *
  * One file, no libraries: raw MIPS o32 syscalls, a software renderer on /dev/fb0 (320 x 375,
  * 32 bpp, two pages; the 375 x 320 landscape view stored turned clockwise, as Q2 Pod's video
@@ -479,7 +479,7 @@ static int look(const buddy *b) {
 
 static unsigned sheet[SHEET_W * SHEET_H] __attribute__((aligned(65536))); /* premultiplied, so a bilinear sample has no dark fringe */
 static int sheet_ok;
-/* the file and its rows: scratch, given back once read (load). Aligned to 64 KB, MIPS's biggest page */
+/* the file and its rows: scratch, given back once read (load_shown_sheet). Aligned to 64 KB, MIPS's biggest page */
 static unsigned char sheet_file[SHEET_MAX] __attribute__((aligned(65536)));
 static unsigned char sheet_raw[SHEET_H * (1 + SHEET_W * 4)] __attribute__((aligned(65536)));
 
@@ -1357,15 +1357,16 @@ static col shade(const palette *P, float x, float y, float d, float gx, float gy
 }
 /* Frosty's colour: snow shaded like the ghost, a red cap with a white brim and pom-pom,
  * grey twig arms behind the snow, and the ghost's face so the eyes keep their quality. */
+#define HAT_BELOW -51.0f /* frosty_hat has no ink at or below this y */
+#define TWIGS_PAST 45.0f /* nor frosty_twigs within this |x| */
 static col frosty_col(const buddy *b, const palette *P, int l,
                       float x, float y, float d, float gx, float gy) {
     palette snow = { C(.99f, 1, 1), C(.67f, .84f, .94f), P->glow, P->eye };
     col bc = shade(&snow, x, y, d, gx, gy);
     /* the hat's ink lies above y = -53.4 and the twigs' beyond |x| = 45.5 */
-    float hat_d = y < -51 ? frosty_hat(x, y) : 1;
-    float snow_d = 1, twig_d = 1;
-    if (absf(x) > 45) snow_d = frosty_snow(x, y), twig_d = frosty_twigs(x, y);
-    if (twig_d < 0 && snow_d > 0) /* arms behind the snow */
+    float hat_d = y < HAT_BELOW ? frosty_hat(x, y) : 1;
+    float twig_d = absf(x) > TWIGS_PAST ? frosty_twigs(x, y) : 1;
+    if (twig_d < 0 && frosty_snow(x, y) > 0) /* arms behind the snow */
         bc = cmix(C(.62f, .66f, .68f), C(.81f, .84f, .85f), sat(0.48f - twig_d / 9));
     if (hat_d < 0) { /* the hat over its head */
         float brim = frosty_brim(x, y);
@@ -1976,6 +1977,15 @@ static int check(void) {
     b.buddy_choice = CHOICE_FROSTY, update_shown(&b);
     assert(b.showing == CHOICE_FROSTY);
     assert(body_dist(&b, 0, -100) < 0 && body_dist(&b, 0, 0) < 0); /* Frosty's cap and snow */
+    /* Boo's mouth is drawn whole, below the face's old cut at 17 */
+    assert(pack(frosty_col(&b, &pals[0], L_BOO, 0, 19, -9, 0, 0)) != pack(frosty_col(&b, &pals[0], L_NORMAL, 0, 19, -9, 0, 0)));
+    for (float y = -150; y < 70; y += 0.25f) /* frosty_col's culls skip no ink */
+        for (float x = -120; x < 120; x += 0.25f)
+            assert((y < HAT_BELOW || frosty_hat(x, y) >= 0) && (absf(x) > TWIGS_PAST || frosty_twigs(x, y) >= 0 || frosty_snow(x, y) <= 0));
+    {
+        col cap = body_col(&b, &pals[0], L_NORMAL, 0, -100, -5, 0, 0);
+        assert(body_dist(&b, 58.65f, 9.35f) < 0 && cap.r > cap.b + 0.2f); /* a twig, and the red cap */
+    }
     {
         tama keep = b.tm; /* an adult's halo sits above the cap */
         b.on_pet = 1, b.tm.stage = ADULT, b.tm.form = 1;

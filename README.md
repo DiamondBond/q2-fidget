@@ -16,7 +16,7 @@ shows how to use it, and how to paint your own buddy step by step.
 | Make it dizzy | Spin the wheel fast |
 | Make it say boo | Press Centre |
 | Change its colour, turn on Tamagotchi, or quit | Press Return for the menu |
-| Pick a pet | Press Return for the menu, then the Pet row: Auto, Kasper, Frosty or Custom |
+| Pick a pet | Press Return for the menu, then the Pet row: Auto, Kasper (the ghost), Frosty or Custom |
 | Make it your own | Paint a `buddy.png` (see [Your own buddy](#your-own-buddy)) |
 
 The menu looks like the pop-ups of Q2 Pod's own games in your theme, Minimal, Modern or Classic, Light Mode
@@ -57,8 +57,8 @@ Paint your own and Buddy shows it instead of the ghost: save it as `buddy.png` i
 microSD card, beside `q2-fidget`, then open Buddy and pick **Pet: Custom** in the menu. (`.fidget` is hidden
 on a Mac; Cmd+Shift+. in Finder shows it.) Updates keep it; App Store → Remove deletes it with the folder.
 Frosty is a snowman Buddy draws itself, shown by **Pet: Frosty**, or by **Pet: Auto** in December to
-February by the UTC date. That is the northern winter, so south of the equator pick **Pet: Kasper**, the
-ghost, to keep it all year.
+February by the UTC date. That is the northern winter, so south of the equator pick **Pet: Kasper** to
+keep the ghost all year.
 
 ![The template's 14 cells, numbered](buddy-guide.png)
 
@@ -111,7 +111,8 @@ start plays through the minutes since by the Q2's clock. It reads `.fidget/buddy
 
 `./build.sh` makes `dist/fidget.zip` (needs `clang` and `ld.lld`). `./preview.sh` renders a
 scripted session on the PC to `preview.mp4` and `preview.gif`, and `./preview.sh 0 pet` one in Tamagotchi
-mode; a third argument, a PNG, previews it as `buddy.png`. `./template.sh` renders `buddy-template.png` and
+mode; a third argument, a PNG, previews it as `buddy.png`, and `BUDDY_PET=2` previews Frosty.
+`./template.sh` renders `buddy-template.png` and
 `buddy-guide.png` from the ghost (needs `ffmpeg` with `drawtext`): run it after changing how the ghost looks.
 `cc -DHOST fidget.c -o /tmp/buddy && /tmp/buddy check`, run here, tests the pet's rules and the PNG decoder,
 on `buddy-template.png`; build it with
